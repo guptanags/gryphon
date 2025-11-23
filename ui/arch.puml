@@ -1,0 +1,53 @@
+@startuml
+skinparam backgroundColor #1a1f2e
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor #1E3A8A
+  BorderColor #3a4060
+  FontColor #FFFFFF
+  ArrowColor #b0b7c3
+}
+skinparam stereotypeCBackgroundColor #252b3a
+skinparam stereotypeCFontColor #FFFFFF
+
+node "MCP Server" as MCP #1E3A8A
+
+package "AI Innovation" as AI #252b3a {
+  [AI Intelligence]
+  [Smart Retrieval]
+  [Workflow Agents]
+}
+
+package "Data Foundation" as DL #252b3a {
+  [Data Storage]
+  [Code Assets]
+  [Feedback Loop]
+}
+
+package "Backend Operations" as BE #252b3a {
+  [Service Hub]
+}
+
+MCP --> AI : Drives Innovation
+MCP --> DL : Ensures Data
+BE --> AI : Boosts Productivity #10b981
+AI --> DL : Enhances Efficiency #10b981
+
+note right of MCP
+  <b>AI Control Center</b><br/>
+  - Model Mastery<br/>
+  - Ethical Guard
+end note
+
+note top of AI
+  <b>AI-Powered Growth</b><br/>
+  - Smart Insights<br/>
+  - Automated Tasks
+end note
+
+note bottom of DL
+  <b>Secure Backbone</b><br/>
+  - Scalable Storage<br/>
+  - Real-Time Feedback
+end note
+@enduml

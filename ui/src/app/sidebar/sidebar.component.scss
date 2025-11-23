@@ -1,0 +1,23 @@
+.sidebar {
+  width: 250px;
+  background: var(--primary-bg);
+  padding: 20px;
+}
+
+.sidebar nav a {
+  display: flex;
+  align-items: center;
+  color: var(--text-main);
+  text-decoration: none;
+  padding: 10px;
+  margin: 5px 0;
+  border-radius: 5px;
+  transition: background 0.2s;
+}
+.sidebar nav a.active {
+  background: var(--primary-accent);
+  color: #b0b7c3;
+}
+.sidebar nav .icon {
+  margin-right: 10px;
+}

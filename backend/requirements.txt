@@ -1,0 +1,23 @@
+# requirements.txt
+google-cloud-aiplatform
+google-genai
+qdrant-client
+GitPython
+requests
+beautifulsoup4
+pypdf
+tree-sitter
+tree-sitter-language-pack
+tqdm
+pypdf
+requests
+beautifulsoup4
+langchain-text-splitters
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+radon
+langgraph
+langchain
+langchain-google-vertexai

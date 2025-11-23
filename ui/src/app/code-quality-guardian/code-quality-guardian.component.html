@@ -1,0 +1,46 @@
+<div class="code-quality-guardian-container">
+  <header>
+    <div class="logo">
+      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
+    </div>
+    <div class="user-info">
+      <span class="notification">!</span>
+      <span class="user">User</span>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <app-sidebar></app-sidebar>
+
+    <main class="content-area">
+      <h1>Intelli Review</h1>
+      <section class="quality-metrics">
+        <h3>
+          Repository Quality Metrics
+          <button class="action-btn refresh-btn" (click)="refreshRepositories()" [disabled]="loading">
+            &#x21bb; Refresh
+          </button>
+        </h3>
+        <div *ngIf="loading" class="loading-indicator">Loading...</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Logical Name</th>
+              <th>Quality Score</th>
+              <th>Static Analysis Score</th>
+              <th>Coverage Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let repo of repositories">
+              <td>{{ repo.logical_name }}</td>
+              <td>{{ repo.code_quality_score?.toFixed(2) || 'N/A' }}</td>
+              <td>{{ repo.code_static_analysis_score?.toFixed(2) || 'N/A' }}</td>
+              <td>{{ repo.code_coverage_score?.toFixed(2) || 'N/A' }}%</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</div>

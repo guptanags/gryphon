@@ -1,0 +1,67 @@
+<div class="quality-guardian-container">
+  <header>
+    <div class="logo">
+      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
+    </div>
+    <div class="user-info">
+      <span class="notification">!</span>
+      <span class="title">(Automated Testing)</span>
+      <span class="user">User</span>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <app-sidebar></app-sidebar>
+
+    <main class="content-area">
+      <h1>Quality Guardian</h1>
+
+      <div class="quality-guardian-panel">
+        <label for="repoSelect">Select Repository:</label>
+        <select id="repoSelect" [(ngModel)]="selectedLogicalName">
+          <option value="" disabled>Choose a repository</option>
+          <option *ngFor="let repo of repositories" [value]="repo.logical_name">
+            {{ repo.logical_name }}
+          </option>
+        </select>
+
+        <div class="test-types">
+          <label *ngFor="let type of testTypes" class="test-type-option">
+            <input type="checkbox" [(ngModel)]="selectedTestTypes[type]" />
+            {{ type | titlecase }}
+          </label>
+        </div>
+
+        <button class="generate-btn" (click)="generateAndExecute()" [disabled]="loading">
+          {{ loading ? 'Processing...' : 'Generate & Execute' }}
+        </button>
+      </div>
+
+      <section class="repositories-status">
+        <h3>
+          Repository Status
+          <button class="action-btn refresh-btn" (click)="refreshRepositories()" [disabled]="loading">
+            &#x21bb; Refresh
+          </button>
+        </h3>
+        <div *ngIf="loading" class="loading-indicator">Loading...</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Logical Name</th>
+              <th>Ingestion Status</th>
+              <th>Test Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let repo of repositories">
+              <td>{{ repo.logical_name }}</td>
+              <td><span class="status" [ngClass]="repo.status">{{ repo.status }}</span></td>
+              <td><span class="status" [ngClass]="repo.test_status">{{ repo.test_status }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</div>

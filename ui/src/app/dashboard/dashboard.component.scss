@@ -1,0 +1,195 @@
+// src/app/dashboard/dashboard.component.scss
+.dashboard-container {
+  font-family: 'Arial', sans-serif;
+  background: #5b737c;
+  color: #ffffff;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #5b737c;
+
+  .logo {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+  }
+
+  .user-info {
+    .user {
+      font-size: 16px;
+    }
+  }
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  .sidebar {
+    width: 250px;
+    background: #5b737c;
+    padding: 20px;
+
+    nav {
+      a {
+        display: flex;
+        align-items: center;
+        color: #b0b7c3;
+        text-decoration: none;
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 5px;
+
+        &.active {
+          background: #3a4060;
+          color: #ffffff;
+        }
+
+        .icon {
+          margin-right: 10px;
+        }
+      }
+    }
+  }
+.content-area {
+    flex: 1;
+    padding: 20px;
+    background: #475a65;
+    color: #ffffff;
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+    background: #252b3a;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+    h3 {
+      margin-top: 0;
+      font-size: 18px;
+      color: #b0b7c3;
+    }
+
+    pre {
+      background: #1a1f2e;
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      margin: 10px 0;
+      white-space: pre-wrap;
+    }
+  }
+  .code-snippets {
+      background: #1a1f2e;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      color: #a5f3fc; /* Cyan for code */
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+      }
+    }
+    .quality-guardian {
+    .progress-container {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 15px;
+
+      .progress-circle {
+        position: relative;
+        width: 80px;
+        height: 80px;
+
+        .circular-chart {
+          display: block;
+          width: 100%;
+          height: 100%;
+
+          .circle-bg {
+            fill: none;
+            stroke: #3a4060;
+            stroke-width: 3.8;
+          }
+
+          .circle {
+            fill: none;
+            stroke: #10b981; /* Green for progress */
+            stroke-width: 2.8;
+            stroke-linecap: round;
+            animation: progress 1s ease-out forwards;
+          }
+        }
+
+        .percentage {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          font-size: 1rem;
+          font-weight: bold;
+        }
+      }
+
+      .metrics {
+        font-size: 0.9rem;
+        color: #b0b7c3;
+      }
+    }
+
+    .recent-runs {
+      h3 {
+        font-size: 1rem;
+        color: #b0b7c3;
+        margin-bottom: 10px;
+      }
+
+      ul {
+        list-style: none;
+        padding: 0;
+
+        li {
+          display: flex;
+          justify-content: space-between;
+          padding: 5px 0;
+          border-bottom: 1px solid #3a4060;
+          font-size: 0.9rem;
+          color: #b0b7c3;
+        }
+      }
+    }
+  }
+
+   .autonomous-co-pilot {
+    .features {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+
+      label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.9rem;
+        color: #b0b7c3;
+
+        input {
+          cursor: not-allowed;
+        }
+      }
+    }
+  }
+}
+}
