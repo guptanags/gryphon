@@ -10,20 +10,36 @@
         <div class="metric">{{ totalRepositories }}</div>
       </mat-card-content>
     </mat-card>
-    <mat-card class="metric-card">
+    <mat-card class="metric-card gauge-card">
       <mat-card-header>
         <mat-card-title>Average Code Coverage</mat-card-title>
       </mat-card-header>
       <mat-card-content>
-        <div class="metric">{{ averageCoverage.toFixed(2) }}%</div>
+        <svg class="gauge" viewBox="0 0 200 120">
+          <!-- Background arc -->
+          <path class="gauge-background" d="M 30 100 A 70 70 0 0 1 170 100"></path>
+          <!-- Progress arc -->
+          <path class="gauge-progress" [attr.d]="getGaugeArcPath(averageCoverage, 100)" [style.stroke]="getGaugeColor(averageCoverage)"></path>
+          <!-- Center text -->
+          <text x="100" y="85" class="gauge-value">{{ averageCoverage.toFixed(0) }}</text>
+          <text x="100" y="105" class="gauge-unit">%</text>
+        </svg>
       </mat-card-content>
     </mat-card>
-    <mat-card class="metric-card">
+    <mat-card class="metric-card gauge-card">
       <mat-card-header>
         <mat-card-title>Average Quality Score</mat-card-title>
       </mat-card-header>
       <mat-card-content>
-        <div class="metric">{{ averageQualityScore.toFixed(2) }}</div>
+        <svg class="gauge" viewBox="0 0 200 120">
+          <!-- Background arc -->
+          <path class="gauge-background" d="M 30 100 A 70 70 0 0 1 170 100"></path>
+          <!-- Progress arc -->
+          <path class="gauge-progress" [attr.d]="getGaugeArcPath(averageQualityScore, 10)" [style.stroke]="getGaugeColor(averageQualityScore * 10)"></path>
+          <!-- Center text -->
+          <text x="100" y="85" class="gauge-value">{{ averageQualityScore.toFixed(1) }}</text>
+          <text x="100" y="105" class="gauge-unit">/100</text>
+        </svg>
       </mat-card-content>
     </mat-card>
   </div>
