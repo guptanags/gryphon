@@ -1,48 +1,45 @@
 <div class="insight-engine-container">
-  <header>
-    <div class="logo">
-      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
-    </div>
-    <div class="user-info">
-      <span class="user">User</span>
-    </div>
-  </header>
+  <h1>Insight Engine</h1>
 
-  <div class="main-content">
-    <app-sidebar></app-sidebar>
+  <mat-card class="card ingestion-form">
+    <mat-card-header>
+      <mat-card-title>Ingest New Repository</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <mat-form-field appearance="outline">
+        <mat-label>Logical Name</mat-label>
+        <input matInput [(ngModel)]="logicalName" placeholder="e.g., my-project-backend">
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Git Repo (url,branch)</mat-label>
+        <input matInput [(ngModel)]="gitRepo" placeholder="e.g., https://github.com/foo/bar.git,main">
+      </mat-form-field>
+    </mat-card-content>
+    <mat-card-actions>
+      <button mat-raised-button color="primary" (click)="ingest()" [disabled]="loading">
+        {{ loading ? 'Ingesting...' : 'Ingest' }}
+      </button>
+    </mat-card-actions>
+  </mat-card>
 
-    <main class="content-area">
-      <h1>Insight Engine</h1>
-      <section class="ingestion-form">
-        <h3>Ingest New Repository</h3>
-        <div class="form-group">
-          <label for="logicalName">Logical Name:</label>
-          <input type="text" id="logicalName" [(ngModel)]="logicalName" placeholder="e.g., my-project-backend">
-        </div>
-        <div class="form-group">
-          <label for="gitRepo">Git Repo (url,branch):</label>
-          <input type="text" id="gitRepo" [(ngModel)]="gitRepo" placeholder="e.g., https://github.com/foo/bar.git,main">
-        </div>
-        <button class="action-btn" (click)="ingest()" [disabled]="loading">
-          {{ loading ? 'Ingesting...' : 'Ingest' }}
-        </button>
-      </section>
-
-      <section class="repositories">
-        <h3>
-          Ingested Repositories
-          <button class="action-btn refresh-btn" (click)="refreshRepositories()" [disabled]="loading">
-            &#x21bb; Refresh
-          </button>
-        </h3>
-        <div *ngIf="loading" class="loading-indicator">Loading...</div>
-        <div class="repo-item" *ngFor="let repo of repositories">
-          <span>{{ repo.logical_name }}</span>
-          <span class="url">{{ repo.repo_url }} ({{ repo.branch_name }})</span>
+  <mat-card class="card repositories">
+    <mat-card-header>
+      <mat-card-title>Ingested Repositories</mat-card-title>
+      <button mat-icon-button (click)="refreshRepositories()" [disabled]="loading">
+        <mat-icon>refresh</mat-icon>
+      </button>
+    </mat-card-header>
+    <mat-card-content>
+      <div *ngIf="loading" class="loading-indicator">Loading...</div>
+      <mat-list>
+        <mat-list-item *ngFor="let repo of repositories">
+          <h3 matLine>{{ repo.logical_name }}</h3>
+          <p matLine>
+            <span>{{ repo.repo_url }} ({{ repo.branch_name }})</span>
+          </p>
           <span class="status" [ngClass]="repo.status">{{ repo.status }}</span>
-        </div>
-      </section>
-    </main>
-  </div>
+        </mat-list-item>
+      </mat-list>
+    </mat-card-content>
+  </mat-card>
 </div>
-

@@ -1,0 +1,72 @@
+.sidenav-container {
+  height: 100%;
+}
+
+.sidenav {
+  width: 260px;
+  background-color: var(--surface-color);
+  border-right: 1px solid var(--divider-color);
+  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+}
+
+.sidenav .mat-toolbar {
+  background: transparent;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  height: 64px;
+  border-bottom: 1px solid var(--divider-color);
+}
+
+.logo {
+  height: 40px;
+  width: 40px;
+  margin-right: 16px;
+  border-radius: 8px;
+}
+
+.mat-toolbar {
+  background-color: var(--surface-color);
+  color: var(--text-primary-color);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.mat-toolbar span {
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.mat-nav-list a {
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  margin: 8px 0;
+  height: 48px;
+  color: var(--text-secondary-color);
+  font-weight: 500;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.mat-nav-list a mat-icon {
+  margin-right: 24px;
+  color: var(--text-secondary-color);
+  transition: color 0.3s ease;
+}
+
+.mat-nav-list a:hover {
+  background-color: rgba(0,0,0,0.02);
+}
+
+.mat-nav-list a.active {
+  background-color: var(--primary-color);
+  color: #fff;
+  border-radius: 4px;
+}
+
+.mat-nav-list a.active mat-icon {
+  color: #fff;
+}
+
+.content {
+  padding: 24px;
+}

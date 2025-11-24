@@ -1,49 +1,52 @@
 <div class="interactive-knowledge-base-container">
-  <header>
-    <div class="logo">
-      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
+  <h1>Interactive Knowledge Base</h1>
+
+  <mat-card class="card input-section">
+    <mat-card-content>
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Ask a question about the codebase...</mat-label>
+        <textarea matInput [(ngModel)]="question" rows="3"></textarea>
+      </mat-form-field>
+    </mat-card-content>
+    <mat-card-actions class="actions-right">
+      <button mat-raised-button color="primary" (click)="sendQuestion()" [disabled]="loading">
+        {{ loading ? 'Sending...' : 'Send' }}
+      </button>
+    </mat-card-actions>
+  </mat-card>
+
+  <section class="qa-section" *ngIf="loading || response">
+    <div *ngIf="loading" class="loading-indicator">
+      Fetching answer...
     </div>
-    <div class="user-info">
-      <span class="notification">!</span>
-      <span class="user">User</span>
+
+    <div *ngIf="response" class="ai-response">
+      <mat-card class="card answer-section">
+        <mat-card-header>
+          <mat-card-title>Answer</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="markdown-content" [innerHTML]="answerHtml"></div>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card class="card context-section">
+        <mat-card-header>
+          <mat-card-title>Code Context</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="markdown-content" [innerHTML]="codeContextHtml"></div>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card class="card context-section">
+        <mat-card-header>
+          <mat-card-title>Documentation Context</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="markdown-content" [innerHTML]="docContextHtml"></div>
+        </mat-card-content>
+      </mat-card>
     </div>
-  </header>
-
-  <div class="main-content">
-    <app-sidebar></app-sidebar>
-
-    <main class="content-area">
-      <h1>RAG Q&A</h1>
-
-      <div class="input-section">
-        <textarea placeholder="Ask a question about the codebase..." [(ngModel)]="question" rows="3"></textarea>
-        <button (click)="sendQuestion()" class="send-btn" [disabled]="loading">
-          {{ loading ? 'Sending...' : 'Send' }}
-        </button>
-      </div>
-
-      <section class="qa-section" *ngIf="loading || response">
-        <div *ngIf="loading" class="loading-indicator">
-          Fetching answer...
-        </div>
-
-        <div *ngIf="response" class="ai-response">
-          <div class="answer-section">
-            <h3>Answer</h3>
-            <pre>{{ response.answer }}</pre>
-          </div>
-
-          <div class="context-section">
-            <h3>Code Context</h3>
-            <pre>{{ response.code_context }}</pre>
-          </div>
-
-          <div class="context-section">
-            <h3>Documentation Context</h3>
-            <pre>{{ response.doc_context }}</pre>
-          </div>
-        </div>
-      </section>
-    </main>
-  </div>
+  </section>
 </div>

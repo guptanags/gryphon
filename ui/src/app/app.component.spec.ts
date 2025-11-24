@@ -20,16 +20,16 @@ describe('AppComponent', () => {
     expect(app).toBeTruthy();
   });
 
-  it(`should have as title 'codeforge'`, () => {
+  it(`should have as title 'gryphon'`, () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    expect(app.title).toEqual('codeforge');
+    expect(app.title).toEqual('gryphon');
   });
 
   it('should render title', () => {
     const fixture = TestBed.createComponent(AppComponent);
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('.content span')?.textContent).toContain('codeforge app is running!');
+    expect(compiled.querySelector('.content span')?.textContent).toContain('gryphon app is running!');
   });
 });

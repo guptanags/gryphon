@@ -1,67 +1,72 @@
 <div class="quality-guardian-container">
-  <header>
-    <div class="logo">
-      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
-    </div>
-    <div class="user-info">
-      <span class="notification">!</span>
-      <span class="title">(Automated Testing)</span>
-      <span class="user">User</span>
-    </div>
-  </header>
+  <h1>Quality Guardian</h1>
 
-  <div class="main-content">
-    <app-sidebar></app-sidebar>
-
-    <main class="content-area">
-      <h1>Quality Guardian</h1>
-
-      <div class="quality-guardian-panel">
-        <label for="repoSelect">Select Repository:</label>
-        <select id="repoSelect" [(ngModel)]="selectedLogicalName">
-          <option value="" disabled>Choose a repository</option>
-          <option *ngFor="let repo of repositories" [value]="repo.logical_name">
+  <mat-card class="card quality-guardian-panel">
+    <mat-card-header>
+      <mat-card-title>Generate and Execute Tests</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <mat-form-field appearance="outline">
+        <mat-label>Select Repository</mat-label>
+        <mat-select [(ngModel)]="selectedLogicalName">
+          <mat-option value="" disabled>Choose a repository</mat-option>
+          <mat-option *ngFor="let repo of repositories" [value]="repo.logical_name">
             {{ repo.logical_name }}
-          </option>
-        </select>
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
 
-        <div class="test-types">
-          <label *ngFor="let type of testTypes" class="test-type-option">
-            <input type="checkbox" [(ngModel)]="selectedTestTypes[type]" />
-            {{ type | titlecase }}
-          </label>
-        </div>
-
-        <button class="generate-btn" (click)="generateAndExecute()" [disabled]="loading">
-          {{ loading ? 'Processing...' : 'Generate & Execute' }}
-        </button>
+      <div class="test-types">
+        <mat-checkbox *ngFor="let type of testTypes" [(ngModel)]="selectedTestTypes[type]">
+          {{ type | titlecase }}
+        </mat-checkbox>
       </div>
+    </mat-card-content>
+    <mat-card-actions>
+      <button mat-raised-button color="primary" (click)="generateAndExecute()" [disabled]="loading">
+        {{ loading ? 'Processing...' : 'Generate & Execute' }}
+      </button>
+    </mat-card-actions>
+  </mat-card>
 
-      <section class="repositories-status">
-        <h3>
-          Repository Status
-          <button class="action-btn refresh-btn" (click)="refreshRepositories()" [disabled]="loading">
-            &#x21bb; Refresh
-          </button>
-        </h3>
-        <div *ngIf="loading" class="loading-indicator">Loading...</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Logical Name</th>
-              <th>Ingestion Status</th>
-              <th>Test Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let repo of repositories">
-              <td>{{ repo.logical_name }}</td>
-              <td><span class="status" [ngClass]="repo.status">{{ repo.status }}</span></td>
-              <td><span class="status" [ngClass]="repo.test_status">{{ repo.test_status }}</span></td>
-            </tr>
-          </tbody>
+  <mat-card class="card repositories-status">
+    <mat-card-header>
+      <mat-card-title>Repository Status</mat-card-title>
+      <button mat-icon-button (click)="refreshRepositories()" [disabled]="loading">
+        <mat-icon>refresh</mat-icon>
+      </button>
+    </mat-card-header>
+    <mat-card-content>
+      <div *ngIf="loading" class="loading-indicator">Loading...</div>
+      <div class="mat-elevation-z8">
+        <table mat-table [dataSource]="repositories">
+
+          <!-- Logical Name Column -->
+          <ng-container matColumnDef="logical_name">
+            <th mat-header-cell *matHeaderCellDef> Logical Name </th>
+            <td mat-cell *matCellDef="let repo"> {{repo.logical_name}} </td>
+          </ng-container>
+
+          <!-- Ingestion Status Column -->
+          <ng-container matColumnDef="status">
+            <th mat-header-cell *matHeaderCellDef> Ingestion Status </th>
+            <td mat-cell *matCellDef="let repo">
+              <span class="status" [ngClass]="repo.status">{{ repo.status }}</span>
+            </td>
+          </ng-container>
+
+          <!-- Test Status Column -->
+          <ng-container matColumnDef="test_status">
+            <th mat-header-cell *matHeaderCellDef> Test Status </th>
+            <td mat-cell *matCellDef="let repo">
+              <span class="status" [ngClass]="repo.test_status">{{ repo.test_status }}</span>
+            </td>
+          </ng-container>
+
+          <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+          <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
         </table>
-      </section>
-    </main>
-  </div>
+      </div>
+    </mat-card-content>
+  </mat-card>
 </div>

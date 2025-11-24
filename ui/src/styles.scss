@@ -1,10 +1,57 @@
 /* You can add global styles to this file, and also import other style files */
-// Theme variables based on gryphen-ai-logo.jpg
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Roboto', sans-serif;
+  background-color: #f4f7fa;
+  color: #333;
+}
+
 :root {
-	--primary-bg: #5b737c;
-	--primary-accent: #1C2D4A;
-	--secondary-bg: #A0A0A0;
-	--text-main: #080b34;
-	--text-secondary: #d6d6d8;
-	--accent: #01bdf5;
+  --primary-color: #4a90e2;
+  --primary-dark-color: #357ABD;
+  --accent-color: #ff6b6b;
+  --background-color: #f4f7fa;
+  --surface-color: #ffffff;
+  --text-primary-color: #333333;
+  --text-secondary-color: #757575;
+  --divider-color: #e0e0e0;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 500;
+  color: var(--text-primary-color);
+}
+
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+a:hover {
+  color: var(--primary-dark-color);
+}
+
+.card {
+    background-color: var(--surface-color);
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    padding: 24px;
+    transition: box-shadow 0.3s ease;
+}
+
+.card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }

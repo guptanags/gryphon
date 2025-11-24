@@ -13,6 +13,7 @@ export class DashboardComponent implements OnInit {
   totalRepositories: number = 0;
   averageCoverage: number = 0;
   averageQualityScore: number = 0;
+  displayedColumns: string[] = ['logical_name', 'status', 'test_status'];
 
   constructor(private dataService: DataService) {}
 

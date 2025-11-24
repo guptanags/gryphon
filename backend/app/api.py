@@ -3,6 +3,7 @@ import uvicorn
 # We no longer need threading
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends # Add Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import threading
@@ -19,7 +20,7 @@ from pipeline import (
     pipeline_setup_qdrant, # Rename to avoid conflict
     pipeline_setup_vertex_ai
 )
-
+from vertexai.generative_models import GenerativeModel, Part
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -35,6 +36,15 @@ def get_db_session_for_task():
 app = FastAPI(
     title="Grypon AI API",
     description="API for ingesting and querying codebases."
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 
@@ -389,10 +399,7 @@ You are an expert pair programmer. Answer the user's question based on the code 
 """
         
         # 5. Call Gemini
-        response = generative_model.generate_content(
-            [Part.from_text(prompt)],
-            generation_config=GenerationConfig(temperature=0.0, max_output_tokens=2048)
-        )
+        response = generative_model.generate_content(prompt)
 
         return QueryResponse(
             answer=response.text,

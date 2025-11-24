@@ -9,10 +9,24 @@ import { InteractiveKnowledgeBaseComponent } from './interactive-knowledge-base/
 import { AutonomousCoPilotComponent } from './autonomous-co-pilot/autonomous-co-pilot.component';
 import { SettingsComponent } from './settings/settings.component';
 import { CodeQualityGuardianComponent } from './code-quality-guardian/code-quality-guardian.component';
-import { RouterModule, Routes } from '@angular/router';
 import { SidebarComponent } from './sidebar/sidebar.component';
-import { FormsModule } from '@angular/forms'; // For ngModel
+import { RouterModule, Routes } from '@angular/router';
+import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+import { LayoutModule } from '@angular/cdk/layout';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { MatToolbarModule } from '@angular/material/toolbar';
+import { MatListModule } from '@angular/material/list';
+import { MatIconModule } from '@angular/material/icon';
+import { MatButtonModule } from '@angular/material/button';
+import { MatCardModule } from '@angular/material/card';
+import { MatInputModule } from '@angular/material/input';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatTableModule } from '@angular/material/table';
+import { MatSelectModule } from '@angular/material/select';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 
 const routes: Routes = [
   { path: 'dashboard', component: DashboardComponent },
@@ -22,7 +36,7 @@ const routes: Routes = [
   { path: 'autonomous-co-pilot', component: AutonomousCoPilotComponent },
   { path: 'code-quality-guardian', component: CodeQualityGuardianComponent },
   { path: 'settings', component: SettingsComponent },
-  { path: '', redirectTo: '/dashboard', pathMatch: 'full' } // Set dashboard as home
+  { path: '', redirectTo: '/dashboard', pathMatch: 'full' }
 ];
 
 @NgModule({
@@ -41,7 +55,21 @@ const routes: Routes = [
     BrowserModule,
     RouterModule.forRoot(routes),
     FormsModule,
-    HttpClientModule
+    HttpClientModule,
+    BrowserAnimationsModule,
+    LayoutModule,
+    MatSidenavModule,
+    MatToolbarModule,
+    MatListModule,
+    MatIconModule,
+    MatButtonModule,
+    MatCardModule,
+    MatInputModule,
+    MatFormFieldModule,
+    MatTableModule,
+    MatSelectModule,
+    MatCheckboxModule,
+    MatSlideToggleModule
   ],
   providers: [],
   bootstrap: [AppComponent]

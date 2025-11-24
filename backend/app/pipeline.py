@@ -11,7 +11,8 @@ from tree_sitter_language_pack import get_language, get_parser
 from tqdm import tqdm 
 import vertexai
 from vertexai.language_models import TextEmbeddingModel, TextEmbedding
-from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
+from vertexai.generative_models import GenerativeModel
+from google.cloud.aiplatform_v1.types.content import Part
 import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
@@ -270,7 +271,7 @@ def generate_documentation(model: GenerativeModel, code_chunks: list) -> list:
         code_content = chunk['content'][:4000] # Truncate large chunks
         prompt = f"{prompt_template_start}{code_content}{prompt_template_end}"
         try:
-            response = model.generate_content([Part.from_text(prompt)], generation_config=generation_config)
+            response = model.generate_content([Part.from_text(prompt)])
             doc_chunks.append({
                 "content": response.text,
                 "metadata": {
@@ -474,8 +475,7 @@ Review the FUNCTION TO TEST and the EXISTING TESTS.
         
         try:
             response = model.generate_content(
-                [Part.from_text(prompt)],
-                generation_config=GenerationConfig(temperature=0.1, max_output_tokens=2048)
+                [Part.from_text(prompt)]
             )
             
             generated_test = response.text
@@ -565,8 +565,7 @@ You are an expert QA Automation Engineer. Based on the following documentation, 
 """
     try:
         response = model.generate_content(
-            [Part.from_text(prompt)],
-            generation_config=GenerationConfig(temperature=0.2, max_output_tokens=4096)
+            [Part.from_text(prompt)]
         )
         # Save the Gherkin feature file
         with open(os.path.join(output_dir, "features.feature"), "w") as f:
@@ -602,8 +601,7 @@ Assume the base URL is 'https://api.example.com'.
 """
     try:
         response = model.generate_content(
-            [Part.from_text(prompt)],
-            generation_config=GenerationConfig(temperature=0.0, max_output_tokens=2048)
+            [Part.from_text(prompt)]
         )
         # Save the k6 script
         with open(os.path.join(output_dir, "load-test.js"), "w") as f:
@@ -687,8 +685,7 @@ Score (1-100):
         try:
             prompt = prompt_template.format(code=chunk['content'][:4000]) # Truncate large chunks
             response = model.generate_content(
-                [Part.from_text(prompt)],
-                generation_config=GenerationConfig(temperature=0.0, max_output_tokens=5)
+                [Part.from_text(prompt)]
             )
             # Clean up the response to get only the number
             score_text = response.text.strip().replace("'", "").replace('"',"")
@@ -742,8 +739,7 @@ You are a QA automation expert. Based on the provided source code and the test s
 """
     try:
         response = model.generate_content(
-            [Part.from_text(prompt)],
-            generation_config=GenerationConfig(temperature=0.0, max_output_tokens=5)
+            [Part.from_text(prompt)]
         )
         # Clean up the response to get only the number
         score_text = response.text.strip().replace("'", "").replace('"',"")

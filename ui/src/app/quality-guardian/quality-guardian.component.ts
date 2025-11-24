@@ -13,6 +13,7 @@ export class QualityGuardianComponent implements OnInit {
   testTypes = ['unit', 'acceptance', 'load'];
   selectedTestTypes: { [key: string]: boolean } = {};
   loading = false;
+  displayedColumns: string[] = ['logical_name', 'status', 'test_status'];
 
   constructor(private dataService: DataService) {}
 

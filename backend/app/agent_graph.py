@@ -5,7 +5,8 @@ from typing import Annotated, TypedDict, List, Dict
 from langgraph.graph import StateGraph, END
 
 import vertexai
-from vertexai.generative_models import GenerativeModel, Part, GenerationConfig
+from vertexai.generative_models import GenerativeModel
+from google.cloud.aiplatform_v1.types.content import Part
 
 from agent_tools import AgentTools
 from qdrant_client import QdrantClient, models
@@ -67,32 +68,64 @@ class AutonomousDevTeam:
         return {"plan": response.text, "history": ["Plan generated."]}
 
     def researcher_agent(self, state: AgentState):
-        """Uses RAG to find the relevant code context."""
+        """
+        Smart Researcher: First looks for files mentioned in the plan,
+        then falls back to vector search if needed.
+        """
         print("--- RESEARCHER AGENT ---")
+        found_files = []
         
-        # 1. Embed the requirement
-        req_vector = self.embed_model.get_embeddings([state['requirement']])[0].values
+        # --- STRATEGY 1: EXTRACT FROM PLAN (Deterministic) ---
+        # The planner sees the file list, so it often knows best.
+        prompt = f"""
+        You are a code researcher.
         
-        # 2. Search Qdrant
-        results = self.qdrant.search(
-            collection_name=CODE_COLLECTION_NAME,
-            query_vector=req_vector,
-            limit=5,
-            # Filter by specific repo if needed
-            with_payload=True
-        )
+        The Architect provided this implementation plan:
+        "{state['plan']}"
         
-        found_files = set()
-        context_str = ""
-        for res in results:
-            path = res.payload['file_path']
-            found_files.add(path)
-            # Read the REAL file content from disk to ensure we have the latest
-            content = self.tools.read_file(path)
-            context_str += f"\n--- FILE: {path} ---\n{content}\n"
+        Based on this plan, LIST the specific file paths that need to be modified or read.
+        - Return ONLY a comma-separated list of file paths.
+        - Do not include new files that don't exist yet.
+        - If the plan is vague, return "SEARCH".
+        """
+        response = self.gen_model.generate_content(prompt)
+        clean_response = response.text.strip().replace("'", "").replace('"', "")
+        
+        if "SEARCH" not in clean_response:
+            potential_files = [f.strip() for f in clean_response.split(',')]
+            # Verify these files actually exist to avoid hallucinations
+            for f_path in potential_files:
+                # Try reading the first few bytes to check existence
+                content = self.tools.read_file(f_path)
+                if content and "Error reading file" not in content:
+                    found_files.append(f_path)
             
-        return {"relevant_files": list(found_files), "history": [f"Researched files: {list(found_files)}"]}
+            if found_files:
+                print(f"Researcher: Found target files in plan: {found_files}")
 
+        # --- STRATEGY 2: VECTOR SEARCH (Fallback) ---
+        # If the plan didn't yield valid files, use RAG to find semantically relevant code.
+        if not found_files:
+            print("Researcher: Plan was vague. Falling back to Vector Search...")
+            req_vector = self.embed_model.get_embeddings([state['requirement']])[0].values
+            
+            results = self.qdrant.search(
+                collection_name=CODE_COLLECTION_NAME,
+                query_vector=req_vector,
+                limit=3, # Keep it focused
+                with_payload=True
+            )
+            
+            for res in results:
+                path = res.payload['file_path']
+                found_files.append(path)
+                
+        # Deduplicate
+        found_files = list(set(found_files))
+        
+        return {"relevant_files": found_files, "history": [f"Researched files: {found_files}"]}
+    
+    
     def coder_agent(self, state: AgentState):
         """Writes the code changes."""
         print("--- CODER AGENT ---")

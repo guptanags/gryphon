@@ -1,2 +1,57 @@
-<!-- src/app/app.component.html -->
-<router-outlet></router-outlet>
+<mat-sidenav-container class="sidenav-container">
+  <mat-sidenav #drawer class="sidenav" fixedInViewport
+      [attr.role]="(isHandset$ | async) ? 'dialog' : 'navigation'"
+      [mode]="(isHandset$ | async) ? 'over' : 'side'"
+      [opened]="(isHandset$ | async) === false">
+    <mat-toolbar>
+      <img src="assets/gryphon-icon.jpg" alt="Gryphon AI" class="logo">
+      <span>Gryphon AI</span>
+    </mat-toolbar>
+    <mat-nav-list>
+      <a mat-list-item routerLink="/dashboard" routerLinkActive="active">
+        <mat-icon>dashboard</mat-icon>
+        <span>Dashboard</span>
+      </a>
+      <a mat-list-item routerLink="/insight-engine" routerLinkActive="active">
+        <mat-icon>search</mat-icon>
+        <span>Insight Engine</span>
+      </a>
+      <a mat-list-item routerLink="/quality-guardian" routerLinkActive="active">
+        <mat-icon>build</mat-icon>
+        <span>Quality Guardian</span>
+      </a>
+      <a mat-list-item routerLink="/interactive-knowledge-base" routerLinkActive="active">
+        <mat-icon>library_books</mat-icon>
+        <span>Interactive Knowledge Base</span>
+      </a>
+      <a mat-list-item routerLink="/autonomous-co-pilot" routerLinkActive="active">
+        <mat-icon>smart_toy</mat-icon>
+        <span>Autonomous Co-pilot</span>
+      </a>
+      <a mat-list-item routerLink="/code-quality-guardian" routerLinkActive="active">
+        <mat-icon>shield</mat-icon>
+        <span>Intelli Review</span>
+      </a>
+      <a mat-list-item routerLink="/settings" routerLinkActive="active">
+        <mat-icon>settings</mat-icon>
+        <span>Settings</span>
+      </a>
+    </mat-nav-list>
+  </mat-sidenav>
+  <mat-sidenav-content>
+    <mat-toolbar color="primary">
+      <button
+        type="button"
+        aria-label="Toggle sidenav"
+        mat-icon-button
+        (click)="drawer.toggle()"
+        *ngIf="isHandset$ | async">
+        <mat-icon aria-label="Side nav toggle icon">menu</mat-icon>
+      </button>
+      <span>Gryphon</span>
+    </mat-toolbar>
+    <div class="content">
+      <router-outlet></router-outlet>
+    </div>
+  </mat-sidenav-content>
+</mat-sidenav-container>

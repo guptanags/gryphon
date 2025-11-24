@@ -1,43 +1,41 @@
 <div class="autonomous-co-pilot-container">
-  <header>
-    <div class="logo">
-      <img src="assets/gryphon-ai-logo.jpg" alt="Gryphen AI Logo" style="height:75px; vertical-align:middle;" />
-    </div>
-    <div class="user-info">
-      <span class="notification">!</span>
-      <span class="phase">Phase 4</span>
-    </div>
-  </header>
+  <h1>Autonomous Co-pilot</h1>
+  <p class="subtitle">Code Generation & PR Automation</p>
 
-  <div class="main-content">
-    <app-sidebar></app-sidebar>
-
-    <main class="content-area">
-      <h1>Autonomous Co-pilot<br><span class="subtitle">(Code Generation & PR Automation)</span></h1>
-      
-      <div class="feature-request">
-        <select [(ngModel)]="selectedLogicalName">
-          <option value="" disabled>Select a repository</option>
-          <option *ngFor="let repo of repositories" [value]="repo.logical_name">
+  <mat-card class="card feature-request">
+    <mat-card-content>
+      <mat-form-field appearance="outline">
+        <mat-label>Select Repository</mat-label>
+        <mat-select [(ngModel)]="selectedLogicalName">
+          <mat-option value="" disabled>Choose a repository</mat-option>
+          <mat-option *ngFor="let repo of repositories" [value]="repo.logical_name">
             {{ repo.logical_name }}
-          </option>
-        </select>
-        <textarea placeholder="Describe your feature request in natural language..." [(ngModel)]="requirement" rows="4"></textarea>
-        <button (click)="runAgent()" [disabled]="loading">
-          {{ loading ? 'Running...' : 'Run Agent' }}
-        </button>
-      </div>
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Describe your feature request in natural language...</mat-label>
+        <textarea matInput [(ngModel)]="requirement" rows="4"></textarea>
+      </mat-form-field>
+    </mat-card-content>
+    <mat-card-actions>
+      <button mat-raised-button color="primary" (click)="runAgent()" [disabled]="loading">
+        {{ loading ? 'Running...' : 'Run Agent' }}
+      </button>
+    </mat-card-actions>
+  </mat-card>
 
-      <div *ngIf="agentStatus" class="agent-status">
-        <h2>Agent Status</h2>
-        <p><strong>Status:</strong> <span [ngClass]="agentStatus.status">{{ agentStatus.status }}</span></p>
-        <p><strong>Current Step:</strong> {{ agentStatus.current_step }}</p>
-        
-        <h3>Logs:</h3>
-        <pre class="logs-container">
-          <div *ngFor="let log of agentStatus.logs">{{ log }}</div>
-        </pre>
-      </div>
-    </main>
-  </div>
+  <mat-card *ngIf="agentStatus" class="card agent-status">
+    <mat-card-header>
+      <mat-card-title>Agent Status</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <p><strong>Status:</strong> <span [ngClass]="agentStatus.status">{{ agentStatus.status }}</span></p>
+      <p><strong>Current Step:</strong> {{ agentStatus.current_step }}</p>
+      <h3>Logs:</h3>
+      <pre class="logs-container">
+        <div *ngFor="let log of agentStatus.logs">{{ log }}</div>
+      </pre>
+    </mat-card-content>
+  </mat-card>
 </div>
