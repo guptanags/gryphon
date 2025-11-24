@@ -1,5 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { DataService } from '../data.service';
+import { Router } from '@angular/router';
 import { RepositoryStatus } from '../api';
 
 @Component({
@@ -15,7 +16,11 @@ export class DashboardComponent implements OnInit {
   averageQualityScore: number = 0;
   displayedColumns: string[] = ['logical_name', 'status', 'test_status'];
 
-  constructor(private dataService: DataService) {}
+  constructor(private dataService: DataService, private router: Router) {}
+
+  openRepository(logicalName: string) {
+    this.router.navigate(['/repository', logicalName]);
+  }
 
   ngOnInit() {
     this.refresh();

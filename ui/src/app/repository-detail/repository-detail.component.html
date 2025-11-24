@@ -1,0 +1,50 @@
+<div class="repository-detail-container" *ngIf="repository; else loadingTpl">
+  <h1>{{ repository.logical_name }}</h1>
+  <div class="summary">
+    <mat-card class="metric-card gauge-card">
+      <mat-card-header>
+        <mat-card-title>Code Coverage</mat-card-title>
+      </mat-card-header>
+      <mat-card-content>
+        <svg class="gauge" viewBox="0 0 200 120">
+          <path class="gauge-background" d="M 30 100 A 70 70 0 0 1 170 100"></path>
+          <path class="gauge-progress" [attr.d]="getGaugeArcPath(repository.code_coverage_score || 0, 100)" [style.stroke]="getGaugeColor(repository.code_coverage_score || 0)"></path>
+          <text x="100" y="85" class="gauge-value">{{ (repository.code_coverage_score || 0) | number:'1.0-0' }}</text>
+          <text x="100" y="105" class="gauge-unit">%</text>
+        </svg>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card class="metric-card gauge-card">
+      <mat-card-header>
+        <mat-card-title>Code Quality</mat-card-title>
+      </mat-card-header>
+      <mat-card-content>
+        <svg class="gauge" viewBox="0 0 200 120">
+          <path class="gauge-background" d="M 30 100 A 70 70 0 0 1 170 100"></path>
+          <path class="gauge-progress" [attr.d]="getGaugeArcPath(repository.code_quality_score || 0, 10)" [style.stroke]="getGaugeColor((repository.code_quality_score || 0) * 10)"></path>
+          <text x="100" y="85" class="gauge-value">{{ (repository.code_quality_score || 0) | number:'1.1-1' }}</text>
+          <text x="100" y="105" class="gauge-unit">/100</text>
+        </svg>
+      </mat-card-content>
+    </mat-card>
+  </div>
+
+  <div class="actions">
+    <button mat-raised-button color="primary" (click)="generateTests()" [disabled]="testGenerating">{{ testGenerating ? 'Generating...' : 'Generate Tests' }}</button>
+    <button mat-raised-button color="accent" (click)="runCodeReview()" [disabled]="agentRunning">{{ agentRunning ? 'Running Agent...' : 'Run Code Review / Optimize' }}</button>
+    <button mat-button (click)="refresh()">Refresh</button>
+  </div>
+
+  <div class="details">
+    <h3>Repository Details</h3>
+    <p><strong>Repo URL:</strong> {{ repository.repo_url }}</p>
+    <p><strong>Branch:</strong> {{ repository.branch_name }}</p>
+    <p><strong>Status:</strong> <span class="status" [ngClass]="repository.status">{{ repository.status }}</span></p>
+    <p><strong>Test Status:</strong> <span class="status" [ngClass]="repository.test_status">{{ repository.test_status }}</span></p>
+  </div>
+</div>
+
+<ng-template #loadingTpl>
+  <div class="loading">Loading repository...</div>
+</ng-template>

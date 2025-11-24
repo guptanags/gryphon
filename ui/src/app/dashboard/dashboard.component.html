@@ -52,7 +52,9 @@
         <!-- Logical Name Column -->
         <ng-container matColumnDef="logical_name">
           <th mat-header-cell *matHeaderCellDef> Logical Name </th>
-          <td mat-cell *matCellDef="let repo"> {{repo.logical_name}} </td>
+          <td mat-cell *matCellDef="let repo">
+            <a class="repo-link" (click)="openRepository(repo.logical_name)">{{ repo.logical_name }}</a>
+          </td>
         </ng-container>
 
         <!-- Ingestion Status Column -->

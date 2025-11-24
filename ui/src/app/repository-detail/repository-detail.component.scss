@@ -1,0 +1,36 @@
+.repository-detail-container {
+  padding: 24px;
+}
+
+.summary {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.details {
+  margin-top: 24px;
+}
+
+.loading {
+  padding: 24px;
+  font-size: 16px;
+}
+
+/* Reuse gauge styles from dashboard */
+.gauge {
+  width: 200px;
+  height: 120px;
+}
+
+.gauge-background { fill: none; stroke: #e0e0e0; stroke-width: 4; }
+.gauge-progress { fill: none; stroke-width: 4; stroke-linecap: round; }
+.gauge-value { font-size: 28px; font-weight: 700; text-anchor: middle; }
+.gauge-unit { font-size: 14px; text-anchor: middle; }

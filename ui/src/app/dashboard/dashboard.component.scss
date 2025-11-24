@@ -130,3 +130,9 @@ h1 {
   background-color: #ffebee;
   color: #f44336;
 }
+
+.repo-link {
+  color: var(--primary-color);
+  cursor: pointer;
+  text-decoration: underline;
+}
