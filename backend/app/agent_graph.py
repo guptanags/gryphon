@@ -30,6 +30,9 @@ class AgentState(TypedDict):
     # Logs
     history: Annotated[List[str], operator.add]
     edit_mode: str # 'rewrite' or 'append'
+    
+    language: str # 'python' or 'java'
+    project_type: str # 'flask', 'spring-boot', etc.
 
 # --- 2. Define the Nodes (The Agents) ---
 
@@ -44,28 +47,52 @@ class AutonomousDevTeam:
         self.embed_model, self.gen_model = setup_vertex_ai()
 
     def planner_agent(self, state: AgentState):
-        """Analyzes requirement and creates a step-by-step plan."""
         print("--- PLANNER AGENT ---")
+        files_list = self.tools.list_files()
+        files_context = "\n".join(files_list[:100]) # First 100 files
+        
+        # Detect Language & Framework
+        language = "python"
+        project_type = "script"
+        if "pom.xml" in files_list:
+            language = "java"
+            project_type = "maven/spring-boot"
+        elif "package.json" in files_list:
+            language = "typescript"
+            project_type = "node"
+            
+        print(f"Detected: {language} ({project_type})")
+        
         prompt = f"""
         You are a Technical Lead.
         Requirement: "{state['requirement']}"
         
-        Available Files in Repo:
-        {self.tools.list_files()[:50]} # Limit to avoid token overflow
+        Context:
+        - Language: {language}
+        - Framework: {project_type}
+        - File Structure:
+        {files_context}
         
         Create a concise implementation plan.
-        1. Identify which files likely need modification.
-        2. Identify what new files (tests) are needed.
-        """
-        prompt += """
-        3. Decide on the editing strategy:
-           - 'APPEND': If adding a new standalone class or function at the end of a file.
-           - 'REWRITE': If modifying existing logic inside functions.
-           
-        Return the plan and the Strategy (APPEND or REWRITE).
+        
+        **FRAMEWORK GUIDELINES:**
+        - If Java/Spring: Mention creating Controller, Service, or DTO classes if needed. Use 'src/main/java' for code and 'src/test/java' for tests.
+        - If Python/Flask: Mention modifying routes or views.
+        
+        **CRITICAL INSTRUCTION:** You must mention the specific File Paths that need modification.
+        
+        1. Identify which specific existing files need modification.
+        2. Identify what new files (tests/classes) need to be created.
         """
         response = self.gen_model.generate_content(prompt)
-        return {"plan": response.text, "history": ["Plan generated."]}
+        
+        return {
+            "plan": response.text, 
+            "history": [f"Plan generated for {language} project."],
+            "language": language,       # Save to state
+            "project_type": project_type # Save to state
+        }
+    
 
     def researcher_agent(self, state: AgentState):
         """
@@ -140,6 +167,8 @@ class AutonomousDevTeam:
 
         prompt = f"""
         You are a Senior Developer. Implement this requirement: "{state['requirement']}"
+        Language: {state.get('language', 'python')}
+        Framework: {state.get('project_type', 'generic')}
         
         Plan: {state['plan']}
         
@@ -147,16 +176,15 @@ class AutonomousDevTeam:
         {context}
         
         **CRITICAL INSTRUCTIONS:**
-        1. You must return the **COMPLETE** source code for any file you modify.
-        2. **DO NOT** use placeholders like `# ... existing code ...` or `// ... rest of file`.
-        3. If you are adding a new endpoint or function, DO NOT delete existing functions.
-        4. If you output a file that is significantly smaller than the original, you will fail the task.
-        5. Ensure all imports are preserved.
+        1. Return COMPLETE source code. No placeholders.
+        2. **FOR JAVA:** - Ensure correct 'package' declaration at the top of files.
+           - Ensure all imports (especially 'org.springframework.*') are included.
+           - If creating a new class, ensure the filename matches the class name.
+        3. **FOR PYTHON:** Ensure imports are preserved.
         
-        Format your response strictly as:
-        
-        ### FILE: path/to/file.py
-        (Full, complete file content here)
+        Format:
+        ### FILE: path/to/File.java
+        (Content)
         ### END FILE
         """
         
@@ -200,11 +228,18 @@ class AutonomousDevTeam:
             
         prompt = f"""
         You are an SDET. Write a unit test for this new code.
+        Language: {state.get('language', 'python')}
         
         New Code:
         {changes_context}
         
-        Return only the python test code.
+        **INSTRUCTIONS:**
+        - If Java: Use **JUnit 5** (@Test) and **Mockito** (@Mock, @InjectMocks).
+          - Ensure the test class is in the correct package (usually same as source but in src/test/java).
+          - Include all necessary imports.
+        - If Python: Use **pytest**.
+        
+        Return only the test code.
         """
         response = self.gen_model.generate_content(prompt)
         
