@@ -1,0 +1,53 @@
+<div class="agent-graph-container" *ngIf="logicalName; else noRepo">
+  <div class="header">
+    <div class="title">Agent LangGraph</div>
+    <div class="meta">Logical: <strong>{{ logicalName }}</strong> • Status: <span [ngClass]="status">{{ status }}</span></div>
+  </div>
+
+  <div class="graph-canvas">
+    <svg viewBox="0 0 720 360" preserveAspectRatio="xMidYMid meet">
+      <!-- Edges -->
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L10,5 L0,10 L2,5 z" fill="var(--text-primary-color)"></path>
+        </marker>
+      </defs>
+
+      <g *ngFor="let e of edges">
+          <path [attr.d]="getEdgePath(e.from, e.to)"
+            [attr.stroke]="e.conditional ? '#8ab4ff' : 'var(--text-secondary-color)'"
+            stroke-width="2"
+            [attr.stroke-dasharray]="e.conditional ? '6,6' : null"
+              fill="none"
+              marker-end="url(#arrow)"></path>
+      </g>
+
+      <!-- Nodes -->
+      <g *ngFor="let n of nodes">
+        <rect [attr.x]="n.x" [attr.y]="n.y" width="120" height="40" rx="6" ry="6"
+              [ngClass]="{ 'node-current': isCurrent(n.id), 'node-normal': !isCurrent(n.id) }"
+              ></rect>
+        <text [attr.x]="n.x + 60" [attr.y]="n.y + 24" class="node-label" text-anchor="middle">{{ n.label }}</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <span class="legend-item"><span class="dot current"></span> Current Step</span>
+    <span class="legend-item"><span class="dot conditional"></span> Conditional Edge</span>
+  </div>
+
+  <div class="logs">
+    <h4>Logs</h4>
+    <div class="logs-body" *ngIf="logs?.length; else noLogs">
+      <div *ngFor="let l of logs">{{ l }}</div>
+    </div>
+    <ng-template #noLogs>
+      <div class="logs-empty">No logs yet for this agent.</div>
+    </ng-template>
+  </div>
+</div>
+
+<ng-template #noRepo>
+  <div class="placeholder">Select a repository to view agent graph and status.</div>
+</ng-template>

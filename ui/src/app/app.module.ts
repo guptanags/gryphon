@@ -11,6 +11,7 @@ import { SettingsComponent } from './settings/settings.component';
 import { CodeQualityGuardianComponent } from './code-quality-guardian/code-quality-guardian.component';
 import { SidebarComponent } from './sidebar/sidebar.component';
 import { RepositoryDetailComponent } from './repository-detail/repository-detail.component';
+import { AgentGraphComponent } from './agent-graph/agent-graph.component';
 import { RouterModule, Routes } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
@@ -37,6 +38,7 @@ const routes: Routes = [
   { path: 'autonomous-co-pilot', component: AutonomousCoPilotComponent },
   { path: 'code-quality-guardian', component: CodeQualityGuardianComponent },
   { path: 'repository/:logicalName', component: RepositoryDetailComponent },
+  { path: 'agent-graph/:logicalName', component: AgentGraphComponent },
   { path: 'settings', component: SettingsComponent },
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' }
 ];
@@ -52,7 +54,8 @@ const routes: Routes = [
     SettingsComponent,
     CodeQualityGuardianComponent,
     SidebarComponent,
-    RepositoryDetailComponent
+    RepositoryDetailComponent,
+    AgentGraphComponent
   ],
   imports: [
     BrowserModule,

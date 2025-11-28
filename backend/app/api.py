@@ -17,10 +17,11 @@ from database import SessionLocal, engine, get_db
 from pipeline import (
     run_ingestion_pipeline, 
     run_test_generation_pipeline, 
-    pipeline_setup_qdrant, # Rename to avoid conflict
-    pipeline_setup_vertex_ai
+    setup_qdrant, # Rename to avoid conflict
+    setup_vertex_ai
 )
 from vertexai.generative_models import GenerativeModel, Part
+from celery_worker import task_ingest_repo
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -254,8 +255,8 @@ def ingest_sources(
     db.refresh(db_object) # Get the ID of the new object
 
     # Add the heavy work to the background queue, passing the new DB ID
-    background_tasks.add_task(background_ingest_task, db_object.id, req)
-    
+    task_ingest_repo.delay(db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
+
     return IngestResponse(
         message="Ingestion task queued. Processing in background.",
         logical_name=req.logical_name,
@@ -332,8 +333,8 @@ def generate_tests(
 # We initialize these clients *once* on startup for the /query endpoint
 # The background tasks will initialize their own clients
 print("Initializing Q&A clients...")
-qdrant_client = pipeline_setup_qdrant()
-embedding_model, generative_model = pipeline_setup_vertex_ai()
+qdrant_client = setup_qdrant()
+embedding_model, generative_model = setup_vertex_ai()
 
 if not qdrant_client or not embedding_model or not generative_model:
     print("FATAL: Could not initialize Q&A clients. /query endpoint will fail.")

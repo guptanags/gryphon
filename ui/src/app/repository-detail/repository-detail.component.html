@@ -43,6 +43,11 @@
     <p><strong>Status:</strong> <span class="status" [ngClass]="repository.status">{{ repository.status }}</span></p>
     <p><strong>Test Status:</strong> <span class="status" [ngClass]="repository.test_status">{{ repository.test_status }}</span></p>
   </div>
+
+  <div class="agent-graph-section">
+    <h3>Agent Team Workflow</h3>
+    <app-agent-graph [logicalName]="repository.logical_name"></app-agent-graph>
+  </div>
 </div>
 
 <ng-template #loadingTpl>
