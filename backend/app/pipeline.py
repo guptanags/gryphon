@@ -46,13 +46,14 @@ DOCS_COLLECTION_NAME = "docs"
 # Vertex AI
 VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID","vrittera")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-EMBEDDING_MODEL_NAME = "text-embedding-004"
-GENERATIVE_MODEL_NAME = "gemini-1.5-flash-001"
+EMBEDDING_MODEL_NAME = "gemini-embedding-001"
+GENERATIVE_MODEL_NAME = "gemini-2.5-flash-lite"
 VECTOR_DIMENSION = 768
 VECTOR_METRIC = models.Distance.COSINE
 
 # Processing
 BATCH_SIZE = 50 # Reduced to avoid Token Limit errors
+MAX_EMBED_CHARS = 15000  # Safe character length for a single embedding input (approx. tokens * 4)
 
 # --- 3. Tree-sitter Language Configuration ---
 
@@ -194,6 +195,42 @@ def chunk_text(text: str, source_url: str, doc_type: str, chunk_size=1000, chunk
 
 # --- 6. Parsing Logic (Multi-Language) ---
 
+def _extract_imports(tree, language_name: str, content_bytes: bytes) -> list:
+    """Extracts imported module/class names using Tree-sitter."""
+    imports = []
+    
+    # Define queries for imports
+    queries = {
+        "python": """
+            (import_statement name: (dotted_name) @imp)
+            (import_from_statement module_name: (dotted_name) @imp)
+        """,
+        "java": """
+            (import_declaration (scoped_identifier) @imp)
+        """,
+        "typescript": """
+            (import_statement source: (string) @imp)
+        """
+    }
+    
+    if language_name not in queries:
+        return []
+
+    try:
+        query = Query(get_language(language_name), queries[language_name])
+        query_cursor = QueryCursor(query)
+        
+        for _, match_dict in query_cursor.matches(tree.root_node):
+            node = next(iter(match_dict.values())) # Get the captured node
+            if node:
+                # Extract text, strip quotes/spaces
+                imp_text = node.text.decode('utf8').strip("'\" ;")
+                imports.append(imp_text)
+    except Exception:
+        pass
+        
+    return list(set(imports))
+
 def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple[List, List]:
     code_chunks = []
     doc_chunks = []
@@ -218,6 +255,7 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                         code_bytes = f.read().encode('utf8')
                     
                     tree = parser.parse(code_bytes)
+                    dependencies = _extract_imports(tree, config["language"], code_bytes)
                     for pattern_index, match_dict in query_cursor.matches(tree.root_node):
                         node_list = next(iter(match_dict.values()), None)
                         name_node_list = match_dict.get(next(iter(match_dict.keys())) + ".name")
@@ -235,6 +273,7 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                                 "chunk_name": name_node.text.decode('utf8'),
                                 "chunk_type": "class" if "class" in match_dict else "function",
                                 "start_line": node.start_point[0] + 1, "end_line": node.end_point[0] + 1,
+                                "dependencies": dependencies
                             }
                         })
                 except Exception as e:
@@ -376,17 +415,93 @@ def generate_documentation(model: GenerativeModel, code_chunks: list) -> list:
             continue
     return doc_chunks
 
-def embed_chunks(model: TextEmbeddingModel, chunks_content: list) -> list:
-    all_embeddings = []
-    for i in tqdm(range(0, len(chunks_content), BATCH_SIZE), desc="Embedding"):
-        batch = chunks_content[i:i + BATCH_SIZE]
+def _split_long_text(content: str, max_chars: int = MAX_EMBED_CHARS) -> list:
+    """Split a long text into smaller segments while trying to split at newline boundaries.
+    Returns a list of strings each not exceeding max_chars.
+    """
+    if not content or len(content) <= max_chars:
+        return [content]
+
+    chunks = []
+    start = 0
+    length = len(content)
+    while start < length:
+        end = min(start + max_chars, length)
+        # try to split at last newline to keep logical boundaries
+        newline_idx = content.rfind('\n', start, end)
+        if newline_idx > start:
+            end = newline_idx
+        chunks.append(content[start:end])
+        start = end
+    return chunks
+
+
+def embed_chunks(model: TextEmbeddingModel, chunk_objs: list) -> tuple[list, list]:
+    """Embeds a list of chunk objects. Each chunk must be a dict with a 'content' key.
+    Returns a tuple (expanded_chunk_objs, embeddings) where expanded_chunk_objs contains
+    any additional chunks created by splitting long content.
+    """
+    expanded_chunks = []
+    contents = []
+
+    # Expand any long contents into multiple chunks
+    for chunk in chunk_objs:
+        content = chunk.get('content', '')
+        if not isinstance(content, str):
+            content = str(content)
+
+        if len(content) > MAX_EMBED_CHARS:
+            log.info(f"Content too long ({len(content)} chars); splitting into smaller chunks for embedding")
+            parts = _split_long_text(content, MAX_EMBED_CHARS)
+            for idx, p in enumerate(parts):
+                new_chunk = dict(chunk)
+                new_chunk['content'] = p
+                # annotate metadata to indicate split index for debugging
+                metadata = dict(new_chunk.get('metadata', {}))
+                metadata['split_index'] = idx
+                new_chunk['metadata'] = metadata
+                expanded_chunks.append(new_chunk)
+                contents.append(p)
+        else:
+            expanded_chunks.append(chunk)
+            contents.append(content)
+
+    all_embeddings: list = []
+    # Batch and embed; if a batch fails due to token limit, retry per-item with smaller splits
+    for i in tqdm(range(0, len(contents), BATCH_SIZE), desc="Embedding"):
+        batch = contents[i:i + BATCH_SIZE]
         try:
             resp = model.get_embeddings(batch)
             all_embeddings.extend([e.values for e in resp])
         except Exception as e:
-            log.error(f"Embedding error: {e}")
-            all_embeddings.extend([None] * len(batch))
-    return all_embeddings
+            # Log full error and attempt to embed items individually and further split if needed
+            log.error(f"Embedding error on batch: {e}")
+            for j, item in enumerate(batch):
+                try:
+                    resp_item = model.get_embeddings([item])
+                    all_embeddings.append(resp_item[0].values)
+                except Exception as e2:
+                    log.error(f"Embedding error for single item (len={len(item)}): {e2}")
+                    # Attempt to split item into smaller segments
+                    parts = _split_long_text(item, int(MAX_EMBED_CHARS / 2))
+                    part_vecs = []
+                    for part in parts:
+                        try:
+                            resp_part = model.get_embeddings([part])
+                            part_vecs.append(resp_part[0].values)
+                        except Exception as e3:
+                            log.error(f"Failed to embed split part (len={len(part)}): {e3}")
+                            part_vecs.append(None)
+                    # If any part vectors are valid, we average them as a simple heuristic
+                    valid_vecs = [v for v in part_vecs if v is not None]
+                    if valid_vecs:
+                        import numpy as np
+                        avg_vec = np.mean(np.stack(valid_vecs), axis=0).tolist()
+                        all_embeddings.append(avg_vec)
+                    else:
+                        all_embeddings.append(None)
+
+    return expanded_chunks, all_embeddings
 
 def store_in_qdrant(client: QdrantClient, collection_name: str, chunks: list, embeddings: list):
     points = []
@@ -482,11 +597,11 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
         
     # 3. Embed & Store
     if all_code:
-        vecs = embed_chunks(emb_model, [c['content'] for c in all_code])
+        all_code, vecs = embed_chunks(emb_model, all_code)
         store_in_qdrant(qdrant, CODE_COLLECTION_NAME, all_code, vecs)
         
     if all_docs:
-        vecs = embed_chunks(emb_model, [c['content'] for c in all_docs])
+        all_docs, vecs = embed_chunks(emb_model, all_docs)
         store_in_qdrant(qdrant, DOCS_COLLECTION_NAME, all_docs, vecs)
         
     log.info(f"[{logical_name}] Pipeline Complete.")

@@ -9,12 +9,13 @@ from langgraph.graph import StateGraph, END
 
 # Internal Modules
 from agent_tools import AgentTools
-from pipeline import setup_qdrant, CODE_COLLECTION_NAME
+from pipeline import setup_qdrant, setup_vertex_ai, CODE_COLLECTION_NAME
+from qdrant_client import models
 
 # --- Configuration ---
-VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID")
+VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID","vrittera")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-MODEL_ID = "gemini-1.5-flash-001" 
+MODEL_ID = "gemini-2.5-flash-lite" 
 
 # --- 1. JSON Schemas for Structured Output ---
 
@@ -32,7 +33,7 @@ CODER_RESPONSE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "filepath": {"type": "string", "description": "Relative path to the file"},
-                    "content": {"type": "string", "description": "The COMPLETE new content of the file"},
+                    "content": {"type": "string", "description": "The COMPLETE new content of the file. NO PLACEHOLDERS."},
                     "action": {
                         "type": "string", 
                         "enum": ["create", "overwrite"],
@@ -92,18 +93,20 @@ def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "te
         "Content-Type": "application/json; charset=utf-8"
     }
 
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    
-    result = response.json()
     try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
         raw_text = result['candidates'][0]['content']['parts'][0]['text']
+        
         if schema or mime_type == "application/json":
             return json.loads(raw_text)
         return raw_text
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        print(f"Error parsing Vertex response: {e}")
-        print(f"Raw Response: {result}")
+    except Exception as e:
+        print(f"Vertex API Error: {e}")
+        if 'response' in locals():
+            print(f"Response: {response.text}")
         raise
 
 # --- 3. Define the State ---
@@ -123,13 +126,13 @@ class AgentState(TypedDict):
     code_changes: Dict[str, str] # K=path, V=content
     test_code: Dict[str, str]
     
-    # Status Flags for Loops
-    syntax_status: str  # 'passed', 'failed'
+    # Robustness & Circuit Breakers
+    syntax_status: str  # 'passed', 'failed', 'fatal_error'
     review_status: str  # 'passed', 'failed'
+    iterations: int     # Counter to prevent infinite loops
     
     # Logs
     history: Annotated[List[str], operator.add]
-    iterations: int
 
 # --- 4. The Agent Team Class ---
 
@@ -138,7 +141,29 @@ class AutonomousDevTeam:
         self.logical_name = logical_name
         self.repo_path = repo_path
         self.tools = AgentTools(repo_path)
-        self.qdrant = setup_qdrant() # Reuse existing pipeline setup
+        
+        # Clients
+        self.qdrant = setup_qdrant() 
+        # We use the SDK for embeddings (easier) but REST for Generation
+        self.embed_model, _ = setup_vertex_ai() 
+
+    # --- HELPER TOOLS ---
+    def find_definition_tool(self, symbol_name: str):
+        """Finds the file defining a specific Class or Function using Qdrant."""
+        try:
+            results, _ = self.qdrant.scroll(
+                collection_name=CODE_COLLECTION_NAME,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(key="metadata.chunk_name", match=models.MatchValue(value=symbol_name))]
+                ),
+                limit=1,
+                with_payload=True
+            )
+            if results:
+                return results[0].payload['file_path']
+        except Exception:
+            pass
+        return None
 
     # --- NODE: PLANNER ---
     def planner_agent(self, state: AgentState):
@@ -156,8 +181,10 @@ class AutonomousDevTeam:
             language = "typescript"
             project_type = "node"
         
-        # 2. Generate Plan
-        files_context = "\n".join(files_list[:200]) # Limit context
+        # 2. Generate Skeleton (Advanced Context)
+        # Assumes generate_repo_skeleton exists in AgentTools
+        skeleton = self.tools.generate_repo_skeleton()
+        if len(skeleton) > 60000: skeleton = skeleton[:60000] + "\n...(truncated)"
         
         prompt = f"""
         You are a Technical Architect.
@@ -166,8 +193,9 @@ class AutonomousDevTeam:
         Context:
         - Language: {language}
         - Framework: {project_type}
-        - File Structure:
-        {files_context}
+        
+        Repo Structure (Skeleton):
+        {skeleton}
         
         Create a concise implementation plan.
         1. Identify specific existing files to modify.
@@ -181,6 +209,7 @@ class AutonomousDevTeam:
             "plan": plan_text, 
             "language": language, 
             "project_type": project_type,
+            "iterations": 0, # Reset counter
             "history": [f"Plan generated ({language}/{project_type})."]
         }
 
@@ -189,44 +218,58 @@ class AutonomousDevTeam:
         print("--- RESEARCHER AGENT ---")
         found_files = []
         
-        # 1. Ask LLM to extract files from the Plan (Semantic Extraction)
+        # 1. Semantic Extraction from Plan
         prompt = f"""
         Extract the specific file paths mentioned in this plan that need to be read or modified.
+        Also extract any specific Class or Function names mentioned.
         Plan: "{state['plan']}"
-        Return JSON format: {{ "files": ["path/to/file1", "path/to/file2"] }}
+        Return JSON: {{ "files": ["path/to/file1"], "symbols": ["ClassName"] }}
         """
         try:
             extraction = generate_content_rest(prompt, mime_type="application/json")
-            potential_files = extraction.get("files", [])
             
-            # Verify existence
-            for f_path in potential_files:
+            # Verify Files
+            for f_path in extraction.get("files", []):
                 if self.tools.read_file(f_path) and "Error" not in self.tools.read_file(f_path):
                     found_files.append(f_path)
+            
+            # Verify Symbols (Go To Definition)
+            for symbol in extraction.get("symbols", []):
+                def_path = self.find_definition_tool(symbol)
+                if def_path and def_path not in found_files:
+                    found_files.append(def_path)
+                    
         except Exception as e:
             print(f"Researcher extraction error: {e}")
 
-        # 2. Fallback to Vector Search if Plan was vague
+        # 2. Test-Driven Discovery (Fallback)
         if not found_files:
-            print("Fallback to Vector Search...")
-            # Note: We need embedding here. Assuming pipeline.embed_chunks logic or raw call
-            # For simplicity in this graph file, we'll skip the raw embedding call 
-            # and rely on the fact that the Planner usually finds files. 
-            # (To implement strictly: import setup_vertex_ai and use the embedding model)
-            pass
+            print("   [Researcher] Fallback: Test-Driven Discovery...")
+            try:
+                req_vector = self.embed_model.get_embeddings([state['requirement']])[0].values
+                test_results = self.qdrant.search(
+                    collection_name=CODE_COLLECTION_NAME,
+                    query_vector=req_vector,
+                    limit=3,
+                    with_payload=True,
+                    query_filter=models.Filter(must=[models.FieldCondition(key="metadata.file_path", match=models.MatchText(text="test"))])
+                )
+                for res in test_results:
+                    found_files.append(res.payload['file_path'])
+            except Exception:
+                pass
 
-        return {"relevant_files": found_files, "history": [f"Researched files: {found_files}"]}
+        return {"relevant_files": list(set(found_files)), "history": [f"Researched files: {found_files}"]}
 
-    # --- NODE: CODER (REST + JSON) ---
+    # --- NODE: CODER (REST + JSON + Circuit Breaker) ---
     def coder_agent(self, state: AgentState):
         print("--- CODER AGENT ---")
+        
+        # Circuit Breaker Check
         current_iter = state.get("iterations", 0)
         if current_iter > 5:
-            # Circuit Breaker tripped
-            return {
-                "history": ["FATAL: Max iterations reached. Agent is stuck. Aborting."],
-                "syntax_status": "fatal_error"
-            }
+            return {"history": ["FATAL: Max iterations reached. Agent stuck."], "syntax_status": "fatal_error"}
+        
         # Prepare Context
         context = ""
         for path in state['relevant_files']:
@@ -240,6 +283,8 @@ class AutonomousDevTeam:
         
         Plan: {state['plan']}
         
+        Previous Errors (if any): {state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'}
+        
         Context Code:
         {context}
         
@@ -250,7 +295,6 @@ class AutonomousDevTeam:
         """
         
         try:
-            # Call Vertex AI with JSON Schema Enforcement
             data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
             
             changes = {}
@@ -259,8 +303,8 @@ class AutonomousDevTeam:
                 
             return {
                 "code_changes": changes, 
-                "history": ["Code generated via JSON Schema."],
-                "syntax_status": "pending", # Reset flags
+                "history": [f"Code generated (Iter {current_iter})."],
+                "syntax_status": "pending", 
                 "review_status": "pending",
                 "iterations": current_iter + 1
             }
@@ -272,16 +316,18 @@ class AutonomousDevTeam:
         print("--- SYNTAX CHECKER ---")
         errors = []
         
+        if state.get("syntax_status") == "fatal_error":
+            return {"history": ["Skipping syntax check due to fatal error."]}
+
         for filepath, content in state['code_changes'].items():
-            # Python Syntax Check
+            # Python Syntax
             if filepath.endswith(".py"):
                 try:
                     ast.parse(content)
                 except SyntaxError as e:
                     errors.append(f"{filepath}: {e}")
             
-            # Java Syntax Check (Basic check for matching braces/semicolons if javac missing)
-            # In a real container, we would subprocess.run(["javac", ...])
+            # Java Braces Check (Heuristic)
             elif filepath.endswith(".java"):
                 if content.count("{") != content.count("}"):
                     errors.append(f"{filepath}: Mismatched curly braces.")
@@ -299,15 +345,15 @@ class AutonomousDevTeam:
         errors = []
         
         for filepath, content in state['code_changes'].items():
-            # Check for Lazy LLM Placeholders
+            # Lazy LLM Check
             if "# ..." in content or "// ..." in content or "existing code" in content:
                 errors.append(f"{filepath} contains lazy placeholders.")
             
-            # Check for significant size reduction (Validation against Data Loss)
+            # Size reduction check
             original = self.tools.read_file(filepath)
             if original and "Error" not in original:
                 if len(content) < len(original) * 0.5:
-                    errors.append(f"{filepath} is significantly smaller than original.")
+                    errors.append(f"{filepath} is dangerously smaller than original.")
 
         if errors:
             return {
@@ -332,7 +378,7 @@ class AutonomousDevTeam:
         {changes_context}
         
         Instructions:
-        - If Java: Use JUnit 5 and Mockito. Return a full class.
+        - If Java: Use JUnit 5 & Mockito.
         - If Python: Use Pytest.
         - Return JSON: {{ "filepath": "tests/TestFile.java", "content": "..." }}
         """
@@ -344,7 +390,6 @@ class AutonomousDevTeam:
                 "history": ["Tests generated."]
             }
         except Exception:
-            # Fallback for simplicity if test generation fails
             return {"test_code": {}, "history": ["Test generation skipped due to error."]}
 
     # --- NODE: GIT MANAGER ---
@@ -356,16 +401,13 @@ class AutonomousDevTeam:
         branch = f"feature/ai-{clean_req}"
         self.tools.create_branch(branch)
         
-        # 2. Write Code
+        # 2. Write Files
         for path, content in state['code_changes'].items():
             self.tools.write_file(path, content)
+        for path, content in state['test_code'].items():
+            self.tools.write_file(path, content)
             
-        # 3. Write Tests
-        if state.get('test_code'):
-            for path, content in state['test_code'].items():
-                self.tools.write_file(path, content)
-                
-        # 4. Commit and Push
+        # 3. Commit & Push
         result = self.tools.commit_and_push(f"AI Implementation: {state['requirement']}")
         
         return {"history": [f"Git Ops: {result}"]}
@@ -385,29 +427,29 @@ def build_agent_graph(logical_name: str, repo_path: str):
     workflow.add_node("tester", team.tester_agent)
     workflow.add_node("git_manager", team.git_manager_agent)
     
-    # Define Logic for Conditional Edges
+    # Edges & Gates
     def check_syntax_gate(state):
+        if state.get("syntax_status") == "fatal_error":
+            return END
         if state.get("syntax_status") == "failed":
-            return "coder" # Loop back to fix syntax
+            return "coder"
         return "reviewer"
 
     def check_review_gate(state):
         if state.get("review_status") == "failed":
-            return "coder" # Loop back to fix lazy code
+            return "coder"
         return "tester"
 
-    # Set Edges
     workflow.set_entry_point("planner")
     workflow.add_edge("planner", "researcher")
     workflow.add_edge("researcher", "coder")
     
-    # The Loop: Coder -> Syntax -> (maybe Coder) -> Review -> (maybe Coder) -> Tester
     workflow.add_edge("coder", "syntax_checker")
     
     workflow.add_conditional_edges(
         "syntax_checker",
         check_syntax_gate,
-        {"coder": "coder", "reviewer": "reviewer"}
+        {"coder": "coder", "reviewer": "reviewer", END: END}
     )
     
     workflow.add_conditional_edges(

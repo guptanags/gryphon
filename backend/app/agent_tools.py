@@ -87,3 +87,5 @@ class AgentTools:
         with open(full_path, "a", encoding="utf-8") as f:
             f.write(content)
         log.info(f"Appended to file: {file_path}")
+
+    

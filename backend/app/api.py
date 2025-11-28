@@ -255,7 +255,8 @@ def ingest_sources(
     db.refresh(db_object) # Get the ID of the new object
 
     # Add the heavy work to the background queue, passing the new DB ID
-    task_ingest_repo.delay(db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
+    celery_result =task_ingest_repo.delay(db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
+    print(f"Queued Celery task {celery_result.id} for {db_object.logical_name}")
 
     return IngestResponse(
         message="Ingestion task queued. Processing in background.",
