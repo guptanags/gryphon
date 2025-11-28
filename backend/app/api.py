@@ -21,7 +21,21 @@ from pipeline import (
     setup_vertex_ai
 )
 from vertexai.generative_models import GenerativeModel, Part
-from celery_worker import task_ingest_repo
+from celery_worker import task_ingest_repo, celery_app
+import redis
+
+# --- Redis Check ---
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+IS_REDIS_AVAILABLE = False
+
+try:
+    r = redis.from_url(REDIS_URL)
+    r.ping()
+    IS_REDIS_AVAILABLE = True
+    print(f"Redis is AVAILABLE at {REDIS_URL}")
+except Exception as e:
+    print(f"Redis is UNAVAILABLE: {e}. Using in-memory fallback.")
+
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -117,8 +131,8 @@ class AgentStatusResponse(BaseModel):
     current_step: str
     logs: List[str]
 
-def background_ingest_task(db_id: int, req: IngestRequest):
-    """The wrapper function that BackgroundTasks will call."""
+def background_ingest_task(db_id: int, logical_name: str, git_repos: list, confluence_pages: list):
+    """The wrapper function that BackgroundTasks will call (Fallback)."""
     
     db_gen = get_db_session_for_task()
     db = next(db_gen)
@@ -136,9 +150,9 @@ def background_ingest_task(db_id: int, req: IngestRequest):
 
         # 2. Run the heavy pipeline
         avg_score, static_analysis_score = run_ingestion_pipeline(
-            logical_name=req.logical_name,
-            git_repo_list=req.git_repos,
-            confluence_page_list=req.confluence_pages
+            logical_name=logical_name,
+            git_repo_list=git_repos,
+            confluence_page_list=confluence_pages
         )
         
         # 3. On success, update the DB
@@ -152,7 +166,7 @@ def background_ingest_task(db_id: int, req: IngestRequest):
         
     except Exception as e:
         # 4. On failure, update the DB with the error
-        print(f"ERROR: Background ingestion failed for {req.logical_name}: {e}")
+        print(f"ERROR: Background ingestion failed for {logical_name}: {e}")
         if db.is_active:
             repo_branch.status = "failed"
             # We could add an 'error_message' column to store str(e)
@@ -255,11 +269,17 @@ def ingest_sources(
     db.refresh(db_object) # Get the ID of the new object
 
     # Add the heavy work to the background queue, passing the new DB ID
-    celery_result =task_ingest_repo.delay(db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
-    print(f"Queued Celery task {celery_result.id} for {db_object.logical_name}")
+    if IS_REDIS_AVAILABLE:
+        celery_result = task_ingest_repo.delay(db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
+        print(f"Queued Celery task {celery_result.id} for {db_object.logical_name}")
+        message = "Ingestion task queued (Celery)."
+    else:
+        background_tasks.add_task(background_ingest_task, db_object.id, req.logical_name, req.git_repos, req.confluence_pages)
+        print(f"Queued Background task for {db_object.logical_name} (Redis unavailable)")
+        message = "Ingestion task queued (In-Memory Fallback)."
 
     return IngestResponse(
-        message="Ingestion task queued. Processing in background.",
+        message=message,
         logical_name=req.logical_name,
         status_url="/repositories"
     )

@@ -242,7 +242,77 @@ class AutonomousDevTeam:
         except Exception as e:
             print(f"Researcher extraction error: {e}")
 
-        # 2. Test-Driven Discovery (Fallback)
+        # 2. Dependency Graph Expansion (New)
+        print("   [Researcher] Expanding context via Dependency Graph...")
+        dependency_files = []
+        
+        for f_path in found_files:
+            # A. Forward Expansion (What does this file import?)
+            # We need to query Qdrant to get the metadata of this file
+            try:
+                # Find chunks for this file to get its dependencies
+                results, _ = self.qdrant.scroll(
+                    collection_name=CODE_COLLECTION_NAME,
+                    scroll_filter=models.Filter(
+                        must=[models.FieldCondition(key="metadata.file_path", match=models.MatchValue(value=f_path))]
+                    ),
+                    limit=1,
+                    with_payload=True
+                )
+                
+                if results:
+                    # Get the dependencies list from the first chunk
+                    deps = results[0].payload.get('dependencies', [])
+                    print(f"   File {f_path} imports: {deps}")
+                    
+                    # Resolve these imports to files (heuristic)
+                    for dep in deps:
+                        # Search for files that match this import name (as chunk_name or file_path)
+                        # This is a loose match, but better than nothing.
+                        dep_results = self.qdrant.search(
+                            collection_name=CODE_COLLECTION_NAME,
+                            query_vector=[0.0]*768, # Dummy vector, we only care about filter
+                            limit=1,
+                            query_filter=models.Filter(
+                                should=[
+                                    models.FieldCondition(key="metadata.chunk_name", match=models.MatchValue(value=dep)),
+                                    models.FieldCondition(key="metadata.file_path", match=models.MatchText(text=dep)) # Text match for partial paths
+                                ]
+                            ),
+                            with_payload=True
+                        )
+                        for dr in dep_results:
+                            dependency_files.append(dr.payload['file_path'])
+
+            except Exception as e:
+                print(f"   Error in forward expansion for {f_path}: {e}")
+
+            # B. Reverse Expansion (Who imports this file?)
+            # We search for chunks where 'dependencies' list contains this file's name or module name
+            try:
+                # Heuristic: derive module name from file path (e.g. app/ingest.py -> ingest)
+                module_name = os.path.splitext(os.path.basename(f_path))[0]
+                
+                reverse_results = self.qdrant.scroll(
+                    collection_name=CODE_COLLECTION_NAME,
+                    scroll_filter=models.Filter(
+                        must=[models.FieldCondition(key="metadata.dependencies", match=models.MatchValue(value=module_name))]
+                    ),
+                    limit=5, # Limit to 5 reverse deps to avoid explosion
+                    with_payload=True
+                )
+                
+                if reverse_results[0]:
+                    for rr in reverse_results[0]:
+                        print(f"   File {rr.payload['file_path']} imports {module_name}")
+                        dependency_files.append(rr.payload['file_path'])
+                        
+            except Exception as e:
+                print(f"   Error in reverse expansion for {f_path}: {e}")
+
+        found_files.extend(dependency_files)
+        
+        # 3. Test-Driven Discovery (Fallback)
         if not found_files:
             print("   [Researcher] Fallback: Test-Driven Discovery...")
             try:
@@ -259,7 +329,7 @@ class AutonomousDevTeam:
             except Exception:
                 pass
 
-        return {"relevant_files": list(set(found_files)), "history": [f"Researched files: {found_files}"]}
+        return {"relevant_files": list(set(found_files)), "history": [f"Researched files: {list(set(found_files))}"]}
 
     # --- NODE: CODER (REST + JSON + Circuit Breaker) ---
     def coder_agent(self, state: AgentState):

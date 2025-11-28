@@ -53,6 +53,9 @@ TS_PARSER = get_parser('typescript')
 PY_QUERY_STRING = """
 (class_definition name: (identifier) @class.name) @class
 (function_definition name: (identifier) @function.name) @function
+(import_statement name: (dotted_name) @import.name) @import
+(import_from_statement module_name: (dotted_name) @import.name) @import
+
 """
 PY_QUERY = Query(PY_LANGUAGE, PY_QUERY_STRING)
 
@@ -61,6 +64,8 @@ JAVA_QUERY_STRING = """
 (class_declaration name: (identifier) @class.name) @class
 (method_declaration name: (identifier) @function.name) @function
 (constructor_declaration name: (identifier) @function.name) @function
+(import_declaration (scoped_identifier) @import.name) @import
+
 """
 JAVA_QUERY = Query(JAVA_LANGUAGE, JAVA_QUERY_STRING)
 
@@ -71,6 +76,8 @@ TS_QUERY_STRING = """
 (function_declaration name: (identifier) @function.name) @function
 (interface_declaration name: (type_identifier) @class.name) @class
 (lexical_declaration (variable_declarator name: (identifier) value: (arrow_function))) @function
+(import_statement source: (string (string_fragment) @import.name)) @import
+
 """
 TS_QUERY = Query(TS_LANGUAGE, TS_QUERY_STRING)
 
@@ -196,7 +203,14 @@ def parse_codebase(repo_path: str, repo_url: str) -> (list, list):
 
                         chunk_name = name_node.text.decode('utf8')
                         chunk_type = "class" if "class" in match_dict else "function"
-
+                        
+                        # Extract imports for this file (naive approach: all imports in file apply to all chunks)
+                        # A better approach would be to scope imports, but for now, file-level imports are useful enough.
+                        imports = []
+                        # We need to re-scan for imports or capture them in a separate pass if we want them per-chunk.
+                        # However, since we are iterating matches, we might miss imports if they are not part of the current match.
+                        # STRATEGY CHANGE: Let's capture ALL imports in the file first, then attach them to every chunk.
+                        
                         code_chunks.append({
                             "content": node.text.decode('utf8'),
                             "metadata": {
@@ -206,8 +220,51 @@ def parse_codebase(repo_path: str, repo_url: str) -> (list, list):
                                 "chunk_type": chunk_type,
                                 "start_line": node.start_point[0] + 1,
                                 "end_line": node.end_point[0] + 1,
+                                # "imports": ... (We will fill this in a post-processing step or separate pass)
                             }
                         })
+                except Exception as e:
+                    print(f"Error parsing code file {file_path}: {e}")
+                
+                # --- Post-Processing: Extract Imports for the File ---
+                try:
+                    # Create a specific query just for imports to be safe and simple
+                    import_query_str = ""
+                    if file_ext == ".py":
+                        import_query_str = """
+                        (import_statement name: (dotted_name) @import.name)
+                        (import_from_statement module_name: (dotted_name) @import.name)
+                        """
+                    elif file_ext == ".java":
+                        import_query_str = "(import_declaration (scoped_identifier) @import.name)"
+                    elif file_ext == ".ts":
+                        import_query_str = "(import_statement source: (string (string_fragment) @import.name))"
+                    
+                    if import_query_str:
+                        import_query = Query(config["language_obj"] if "language_obj" in config else config["parser"].language, import_query_str)
+                        import_cursor = QueryCursor(import_query)
+                        
+                        file_imports = []
+                        # Re-parse to be sure (or reuse tree if we kept it)
+                        # We need to re-read if we didn't keep the tree. 
+                        # Optimization: Move tree parsing outside the loop.
+                        # For now, let's just re-parse quickly or assume we can access the tree if we refactor.
+                        # Let's Refactor slightly to keep 'tree' accessible.
+                        
+                        # Rerunning parse for clarity in this patch
+                        tree = parser.parse(code_bytes)
+                        
+                        for m in import_cursor.matches(tree.root_node):
+                            for n in m[1].get("import.name", []):
+                                file_imports.append(n.text.decode('utf8'))
+                        
+                        # Attach imports to all chunks from this file
+                        for chunk in code_chunks:
+                            if chunk['metadata']['file_path'] == relative_path:
+                                chunk['metadata']['dependencies'] = list(set(file_imports))
+
+                except Exception as e:
+                    print(f"Error extracting imports for {file_path}: {e}")
                 except Exception as e:
                     print(f"Error parsing code file {file_path}: {e}")
 
