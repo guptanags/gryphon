@@ -1,0 +1,11 @@
+Prompt Engineering (Low Effort, High Impact): Update the 
+coder_agent
+ and 
+planner_agent
+ prompts with better persona definitions, Chain-of-Thought instructions, and few-shot examples.
+Context Construction (Medium Effort): Implement the structured XML-like context format in 
+agent_graph.py
+ to help the LLM distinguish between files.
+Data Ingestion Enhancements (High Effort): Update 
+ingest.py
+ to extract and index more metadata (docstrings, signatures) for better retrieval.

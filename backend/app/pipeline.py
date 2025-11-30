@@ -42,6 +42,7 @@ QDRANT_PORT = 6333
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 CODE_COLLECTION_NAME = "code"
 DOCS_COLLECTION_NAME = "docs"
+FILE_SUMMARY_COLLECTION_NAME = "file_summaries"
 
 # Vertex AI
 VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID","vrittera")
@@ -110,7 +111,7 @@ def setup_qdrant():
     client = QdrantClient(url=QDRANT_HOST, port=QDRANT_PORT, api_key=QDRANT_API_KEY)
     log.info(f"Connected to Qdrant at {QDRANT_HOST}")
 
-    for collection_name in [CODE_COLLECTION_NAME, DOCS_COLLECTION_NAME]:
+    for collection_name in [CODE_COLLECTION_NAME, DOCS_COLLECTION_NAME, FILE_SUMMARY_COLLECTION_NAME]:
         if not client.collection_exists(collection_name=collection_name):
             client.create_collection(
                 collection_name=collection_name,
@@ -231,6 +232,58 @@ def _extract_imports(tree, language_name: str, content_bytes: bytes) -> list:
         
     return list(set(imports))
 
+def _extract_metadata(node, language: str, content_bytes: bytes) -> dict:
+    """Extracts docstrings and signatures from a Tree-sitter node."""
+    metadata = {"docstring": "", "signature": ""}
+    
+    try:
+        # 1. Signature (First line of the node usually contains the signature)
+        # This is a heuristic; for perfect signatures, we'd need granular queries.
+        start_byte = node.start_byte
+        end_byte = node.end_byte
+        
+        # Limit signature length to avoid capturing body
+        # Find the first brace or colon
+        node_text = node.text.decode('utf8')
+        first_line = node_text.split('\n')[0]
+        metadata["signature"] = first_line[:200] # Cap at 200 chars
+        
+        # 2. Docstring
+        # We look for a string literal immediately inside the block
+        # This requires a language-specific query or traversal
+        # Simplified approach: Look for the first string child node
+        for child in node.children:
+            if child.type == "block": # Python function body
+                for grandchild in child.children:
+                    if grandchild.type == "expression_statement":
+                        for greatgrandchild in grandchild.children:
+                            if greatgrandchild.type == "string":
+                                metadata["docstring"] = greatgrandchild.text.decode('utf8').strip('\"\'')
+                                break
+        
+        # Java/TS Docstrings (usually comments BEFORE the node)
+        # Tree-sitter doesn't always attach comments to the node. 
+        # We would need to look at the previous sibling.
+        # Skipping for now to keep it simple, focusing on Python.
+        
+    except Exception:
+        pass
+        
+    return metadata
+
+def _calculate_complexity(content: str) -> int:
+    """Calculates Cyclomatic Complexity for Python code."""
+    try:
+        # We can use radon programmatically if installed, or a simple heuristic
+        # Heuristic: count branching keywords
+        keywords = ["if ", "elif ", "for ", "while ", "except ", "with ", "&&", "||"]
+        score = 1
+        for kw in keywords:
+            score += content.count(kw)
+        return score
+    except Exception:
+        return 1
+
 def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple[List, List]:
     code_chunks = []
     doc_chunks = []
@@ -273,7 +326,9 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                                 "chunk_name": name_node.text.decode('utf8'),
                                 "chunk_type": "class" if "class" in match_dict else "function",
                                 "start_line": node.start_point[0] + 1, "end_line": node.end_point[0] + 1,
-                                "dependencies": dependencies
+                                "dependencies": dependencies,
+                                **_extract_metadata(node, config["language"], code_bytes),
+                                "complexity": _calculate_complexity(content_str)
                             }
                         })
                 except Exception as e:
@@ -414,6 +469,34 @@ def generate_documentation(model: GenerativeModel, code_chunks: list) -> list:
         except Exception:
             continue
     return doc_chunks
+
+def generate_file_summary(model: GenerativeModel, file_content: str, file_path: str, repo_url: str) -> dict:
+    """Generates a high-level summary for the entire file."""
+    prompt = f"""
+    You are a Lead Developer. Summarize the purpose and responsibilities of this file in 1-2 sentences.
+    File: {file_path}
+    Content:
+    ```
+    {file_content[:10000]} 
+    ```
+    (Content truncated if too long)
+    
+    Output JSON: {{ "summary": "..." }}
+    """
+    try:
+        res = model.generate_content([Part.from_text(prompt)], generation_config=GenerationConfig(response_mime_type="application/json"))
+        data = json.loads(res.text)
+        return {
+            "content": data["summary"],
+            "metadata": {
+                "file_path": file_path,
+                "repo_url": repo_url,
+                "doc_type": "file_summary"
+            }
+        }
+    except Exception as e:
+        log.warning(f"Failed to generate summary for {file_path}: {e}")
+        return None
 
 def _split_long_text(content: str, max_chars: int = MAX_EMBED_CHARS) -> list:
     """Split a long text into smaller segments while trying to split at newline boundaries.
@@ -557,6 +640,7 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
     
     all_code = []
     all_docs = []
+    all_summaries = []
     quality_score = None
     
     # 1. Git Repos
@@ -583,6 +667,22 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
                 if code:
                     ai_docs = generate_documentation(gen_model, code)
                     all_docs.extend(ai_docs)
+                    
+                    # Generate File Summaries
+                    # We need to reconstruct full files from chunks or read them again.
+                    # Since we are in the loop, we can just read the files again or do it during parsing.
+                    # Let's do a quick pass on the files we found.
+                    unique_files = set(c['metadata']['file_path'] for c in code)
+                    for f_path in unique_files:
+                        full_path = os.path.join(path, f_path)
+                        try:
+                            with open(full_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            summary = generate_file_summary(gen_model, content, f_path, url)
+                            if summary:
+                                all_summaries.append(summary)
+                        except Exception:
+                            pass
             finally:
                 # Since we use caching workspace, do NOT delete path if you want to keep cache
                 # BUT if using temp clone logic inside clone_repo, you should delete.
@@ -603,6 +703,10 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
     if all_docs:
         all_docs, vecs = embed_chunks(emb_model, all_docs)
         store_in_qdrant(qdrant, DOCS_COLLECTION_NAME, all_docs, vecs)
+
+    if all_summaries:
+        all_summaries, vecs = embed_chunks(emb_model, all_summaries)
+        store_in_qdrant(qdrant, FILE_SUMMARY_COLLECTION_NAME, all_summaries, vecs)
         
     log.info(f"[{logical_name}] Pipeline Complete.")
     return quality_score

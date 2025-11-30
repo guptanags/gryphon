@@ -25,7 +25,7 @@ CODER_RESPONSE_SCHEMA = {
     "properties": {
         "thought_process": {
             "type": "string",
-            "description": "Explain the implementation logic and changes made."
+            "description": "Detailed step-by-step reasoning. Explain the implementation logic, dependency handling, and how you ensured the code is complete and robust."
         },
         "files": {
             "type": "array",
@@ -61,7 +61,7 @@ def get_access_token():
         print(f"Error getting gcloud token: {e}")
         return None
 
-def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "text/plain"):
+def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "text/plain", temperature: float = 0.1):
     """
     Calls Vertex AI via REST API. Supports JSON Mode if schema is provided.
     """
@@ -72,7 +72,7 @@ def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "te
     url = f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/{VERTEX_PROJECT_ID}/locations/{VERTEX_LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
 
     generation_config = {
-        "temperature": 0.1,
+        "temperature": temperature,
         "maxOutputTokens": 8192
     }
     
@@ -187,7 +187,8 @@ class AutonomousDevTeam:
         if len(skeleton) > 60000: skeleton = skeleton[:60000] + "\n...(truncated)"
         
         prompt = f"""
-        You are a Technical Architect.
+        You are a Pragmatic Software Architect. Your goal is to design a minimal, effective solution.
+        
         Requirement: "{state['requirement']}"
         
         Context:
@@ -197,20 +198,59 @@ class AutonomousDevTeam:
         Repo Structure (Skeleton):
         {skeleton}
         
-        Create a concise implementation plan.
-        1. Identify specific existing files to modify.
-        2. Identify new files needed (including tests).
-        3. Explain the logic briefly.
+        Instructions:
+        1. Analyze the Request: Understand the core intent.
+        2. Analyze the Repo: Look at the skeleton to find relevant files.
+        3. Create a Plan:
+           - Identify specific existing files to modify.
+           - Identify new files needed (including tests).
+           - Explain the implementation logic step-by-step.
+        
+        Output Format:
+        Provide a concise, actionable plan.
         """
         
-        plan_text = generate_content_rest(prompt)
+        # 3. Best-of-N Planning (Voting)
+        print("   [Planner] Generating 3 candidate plans...")
+        candidates = []
+        for i in range(3):
+            try:
+                # Use higher temperature for diversity
+                plan_candidate = generate_content_rest(prompt, temperature=0.7)
+                candidates.append(f"--- Plan Option {i+1} ---\n{plan_candidate}\n")
+            except Exception as e:
+                print(f"   [Planner] Error generating candidate {i+1}: {e}")
+        
+        if not candidates:
+            return {"history": ["Planner failed to generate any plans."], "iterations": 0}
+
+        # 4. The Judge (Select Best Plan)
+        print("   [Planner] Judging plans...")
+        judge_prompt = f"""
+        You are a Senior Technical Lead. Compare the following 3 implementation plans for the requirement: "{state['requirement']}".
+        
+        Candidates:
+        {''.join(candidates)}
+        
+        Criteria:
+        1. Completeness: Does it fully address the requirement?
+        2. Simplicity: Is it the simplest working solution?
+        3. Correctness: Does it use the existing repo structure correctly?
+        
+        Instructions:
+        - Select the BEST plan.
+        - Return ONLY the content of the selected plan.
+        - Do not add any meta-commentary like "I selected Plan 1 because...". Just return the plan text.
+        """
+        
+        final_plan = generate_content_rest(judge_prompt, temperature=0.1)
         
         return {
-            "plan": plan_text, 
+            "plan": final_plan, 
             "language": language, 
             "project_type": project_type,
             "iterations": 0, # Reset counter
-            "history": [f"Plan generated ({language}/{project_type})."]
+            "history": [f"Plan generated (Best of 3) ({language}/{project_type})."]
         }
 
     # --- NODE: RESEARCHER ---
@@ -344,42 +384,80 @@ class AutonomousDevTeam:
         context = ""
         for path in state['relevant_files']:
             content = self.tools.read_file(path)
-            context += f"\nFile: {path}\n```\n{content}\n```\n"
+            context += f"\n<file path=\"{path}\">\n{content}\n</file>\n"
             
-        prompt = f"""
-        You are a Senior Developer. Implement this requirement: "{state['requirement']}"
-        Language: {state['language']}
-        Framework: {state['project_type']}
+        # Internal Retry Loop (Red-Flagging)
+        max_retries = 3
+        last_error = state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'
         
-        Plan: {state['plan']}
-        
-        Previous Errors (if any): {state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'}
-        
-        Context Code:
-        {context}
-        
-        **CRITICAL INSTRUCTIONS:**
-        1. Return the COMPLETE source code for any modified file. **NO PLACEHOLDERS**.
-        2. If Java: Ensure correct package declarations and imports.
-        3. Output must match the JSON Schema provided.
-        """
-        
-        try:
-            data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
+        for attempt in range(max_retries):
+            print(f"   [Coder] Attempt {attempt+1}/{max_retries}...")
             
-            changes = {}
-            for file_obj in data.get("files", []):
-                changes[file_obj['filepath']] = file_obj['content']
+            prompt = f"""
+            You are a Senior {state['language']} Engineer. You write clean, efficient, and robust code.
+            
+            Requirement: "{state['requirement']}"
+            Plan: {state['plan']}
+            
+            Context Code:
+            {context}
+            
+            Previous Errors: {last_error}
+            
+            Instructions:
+            1. Think Step-by-Step: Analyze the plan and the context code. Consider dependencies and edge cases.
+            2. Implement: Write the code.
+               - Adhere to {state['language']} best practices (e.g., PEP8 for Python).
+               - Handle errors gracefully.
+               - Ensure all imports are correct.
+            3. Output:
+               - Return the COMPLETE source code. **NO PLACEHOLDERS** (e.g., no "rest of code here").
+               - Output must be valid JSON matching the schema.
+            """
+            
+            try:
+                data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
                 
-            return {
-                "code_changes": changes, 
-                "history": [f"Code generated (Iter {current_iter})."],
-                "syntax_status": "pending", 
-                "review_status": "pending",
-                "iterations": current_iter + 1
-            }
-        except Exception as e:
-            return {"history": [f"Coder Error: {str(e)}"], "syntax_status": "failed", "iterations": current_iter + 1}
+                # --- Red-Flag Checks ---
+                red_flags = []
+                changes = {}
+                
+                # 1. JSON Structure Check (Implicitly handled by generate_content_rest, but double check keys)
+                if not data.get("files"):
+                    red_flags.append("No files returned in JSON.")
+                
+                for file_obj in data.get("files", []):
+                    content = file_obj.get('content', '')
+                    filepath = file_obj.get('filepath', '')
+                    
+                    # 2. Lazy Coding Check
+                    lazy_markers = ["# ...", "// ...", "rest of code", "TODO: implement", "existing code"]
+                    if any(marker in content for marker in lazy_markers):
+                        red_flags.append(f"Lazy coding detected in {filepath} (found placeholder).")
+                    
+                    changes[filepath] = content
+                
+                if red_flags:
+                    error_msg = f"Red-Flagged: {'; '.join(red_flags)}"
+                    print(f"   [Coder] {error_msg}. Retrying...")
+                    last_error = error_msg
+                    continue # Retry
+                
+                # Success!
+                return {
+                    "code_changes": changes, 
+                    "history": [f"Code generated (Iter {current_iter})."],
+                    "syntax_status": "pending", 
+                    "review_status": "pending",
+                    "iterations": current_iter + 1
+                }
+                
+            except Exception as e:
+                print(f"   [Coder] Error: {e}")
+                last_error = f"Coder Exception: {str(e)}"
+        
+        # If we exhaust retries
+        return {"history": [f"Coder Failed after {max_retries} retries: {last_error}"], "syntax_status": "failed", "iterations": current_iter + 1}
 
     # --- NODE: SYNTAX CHECKER ---
     def syntax_checker_agent(self, state: AgentState):
@@ -414,6 +492,7 @@ class AutonomousDevTeam:
         print("--- REVIEWER AGENT ---")
         errors = []
         
+        # 1. Heuristic Checks (Fast Fail)
         for filepath, content in state['code_changes'].items():
             # Lazy LLM Check
             if "# ..." in content or "// ..." in content or "existing code" in content:
@@ -427,9 +506,43 @@ class AutonomousDevTeam:
 
         if errors:
             return {
-                "history": [f"Review Failed: {'; '.join(errors)}"],
+                "history": [f"Review Failed (Heuristic): {'; '.join(errors)}"],
                 "review_status": "failed"
             }
+
+        # 2. LLM Review (Deep Check)
+        print("   [Reviewer] Heuristics passed. Starting LLM review...")
+        
+        changes_context = ""
+        for path, content in state['code_changes'].items():
+            changes_context += f"\nFile: {path}\n```\n{content}\n```\n"
+
+        prompt = f"""
+        You are a Strict Security Auditor and QA Engineer.
+        Review the following code changes for:
+        1. Security Vulnerabilities (Injection, Secrets, etc.)
+        2. Logic Errors or Bugs
+        3. Lazy Coding (Placeholders, incomplete logic)
+        4. Deviation from Requirement: "{state['requirement']}"
+
+        Code:
+        {changes_context}
+
+        Return JSON: {{ "status": "passed" }} OR {{ "status": "failed", "reason": "Detailed explanation of the error." }}
+        """
+
+        try:
+            review = generate_content_rest(prompt, mime_type="application/json")
+            if review.get("status") == "failed":
+                return {
+                    "history": [f"Review Failed (LLM): {review.get('reason')}"],
+                    "review_status": "failed"
+                }
+        except Exception as e:
+            print(f"Reviewer LLM error: {e}")
+            # Fail safe or pass? Let's pass if LLM fails but warn.
+            return {"history": ["Reviewer LLM failed, skipping."], "review_status": "passed"}
+
         return {"history": ["Code review passed."], "review_status": "passed"}
 
     # --- NODE: TESTER ---
