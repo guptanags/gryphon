@@ -88,4 +88,27 @@ class AgentTools:
             f.write(content)
         log.info(f"Appended to file: {file_path}")
 
-    
+    def generate_repo_skeleton(self, max_depth: int = 3) -> str:
+        """
+        Generates a tree-like string representation of the repository structure.
+        Respects common ignore patterns.
+        """
+        skeleton = []
+        ignore_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.DS_Store'}
+        
+        for root, dirs, files in os.walk(self.repo_path):
+            # Modify dirs in-place to skip ignored directories
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
+            
+            level = root.replace(self.repo_path, '').count(os.sep)
+            if level > max_depth:
+                continue
+                
+            indent = ' ' * 4 * (level)
+            skeleton.append(f"{indent}{os.path.basename(root)}/")
+            subindent = ' ' * 4 * (level + 1)
+            for f in files:
+                if f not in ignore_dirs:
+                    skeleton.append(f"{subindent}{f}")
+                    
+        return "\n".join(skeleton)
