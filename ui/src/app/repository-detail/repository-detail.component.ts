@@ -6,7 +6,8 @@ import { RepositoryStatus, TestGenRequest, AutonomousTaskRequest } from '../api'
 @Component({
   selector: 'app-repository-detail',
   templateUrl: './repository-detail.component.html',
-  styleUrls: ['./repository-detail.component.scss']
+  styleUrls: ['./repository-detail.component.scss'],
+  standalone: false
 })
 export class RepositoryDetailComponent implements OnInit {
   logicalName: string = '';
@@ -20,7 +21,7 @@ export class RepositoryDetailComponent implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private dataService: DataService
-  ) {}
+  ) { }
 
   ngOnInit(): void {
     this.logicalName = this.route.snapshot.paramMap.get('logicalName') || '';

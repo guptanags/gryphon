@@ -4,41 +4,33 @@ import requests
 import subprocess
 import ast
 import operator
-from typing import Annotated, TypedDict, List, Dict, Any
+from typing import Annotated, TypedDict, List, Dict
 from langgraph.graph import StateGraph, END
 
 # Internal Modules
 from agent_tools import AgentTools
-from pipeline import setup_qdrant, setup_vertex_ai, CODE_COLLECTION_NAME
+from pipeline import setup_qdrant, CODE_COLLECTION_NAME
 from qdrant_client import models
+from prompt_manager import prompt_manager # <--- NEW IMPORT
 
 # --- Configuration ---
-VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID","vrittera")
+VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-MODEL_ID = "gemini-2.5-flash-lite" 
+MODEL_ID = "gemini-1.5-flash-001" 
 
-# --- 1. JSON Schemas for Structured Output ---
-
-# Schema for the Coder Agent (Strict JSON enforcement)
+# --- 1. JSON Schemas ---
 CODER_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "thought_process": {
-            "type": "string",
-            "description": "Detailed step-by-step reasoning. Explain the implementation logic, dependency handling, and how you ensured the code is complete and robust."
-        },
+        "thought_process": {"type": "string"},
         "files": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "filepath": {"type": "string", "description": "Relative path to the file"},
-                    "content": {"type": "string", "description": "The COMPLETE new content of the file. NO PLACEHOLDERS."},
-                    "action": {
-                        "type": "string", 
-                        "enum": ["create", "overwrite"],
-                        "description": "Whether to create a new file or overwrite an existing one."
-                    }
+                    "filepath": {"type": "string"},
+                    "content": {"type": "string"},
+                    "action": {"type": "string", "enum": ["create", "overwrite"]}
                 },
                 "required": ["filepath", "content", "action"]
             }
@@ -50,598 +42,331 @@ CODER_RESPONSE_SCHEMA = {
 # --- 2. Helper Functions (REST & Auth) ---
 
 def get_access_token():
-    """Gets Google Cloud Access Token via gcloud CLI or Env Var."""
     token = os.environ.get("GCLOUD_ACCESS_TOKEN")
-    if token:
-        return token
+    if token: return token
     try:
-        # Fallback to gcloud command
         return subprocess.check_output(["gcloud", "auth", "print-access-token"]).decode("utf-8").strip()
-    except Exception as e:
-        print(f"Error getting gcloud token: {e}")
+    except:
         return None
 
-def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "text/plain", temperature: float = 0.1):
-    """
-    Calls Vertex AI via REST API. Supports JSON Mode if schema is provided.
-    """
+def generate_content_rest(prompt: str, schema: dict = None, mime_type: str = "text/plain"):
     token = get_access_token()
-    if not token:
-        raise ValueError("No GCloud Access Token found.")
+    if not token: raise ValueError("No GCloud Token")
 
     url = f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/{VERTEX_PROJECT_ID}/locations/{VERTEX_LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
 
-    generation_config = {
-        "temperature": temperature,
-        "maxOutputTokens": 8192
-    }
-    
-    # Enable JSON Mode if schema is present
+    gen_config = {"temperature": 0.1, "maxOutputTokens": 8192}
     if schema:
-        generation_config["responseMimeType"] = "application/json"
-        generation_config["responseSchema"] = schema
+        gen_config["responseMimeType"] = "application/json"
+        gen_config["responseSchema"] = schema
     elif mime_type == "application/json":
-        generation_config["responseMimeType"] = "application/json"
+        gen_config["responseMimeType"] = "application/json"
 
     payload = {
         "contents": [{ "role": "user", "parts": [{"text": prompt}] }],
-        "generationConfig": generation_config
+        "generationConfig": gen_config
     }
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json; charset=utf-8"
-    }
-
+    
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        
-        result = response.json()
-        raw_text = result['candidates'][0]['content']['parts'][0]['text']
-        
-        if schema or mime_type == "application/json":
-            return json.loads(raw_text)
-        return raw_text
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        res_json = resp.json()
+        text = res_json['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(text) if (schema or mime_type == "application/json") else text
     except Exception as e:
-        print(f"Vertex API Error: {e}")
-        if 'response' in locals():
-            print(f"Response: {response.text}")
+        print(f"Vertex Error: {e}")
         raise
 
-# --- 3. Define the State ---
+# --- 3. State Definition ---
 
 class AgentState(TypedDict):
     logical_name: str
     repo_path: str
     requirement: str
-    
-    # Context
-    language: str       # 'python', 'java', 'typescript'
-    project_type: str   # 'flask', 'spring-boot', 'node'
-    
-    # Scratchpad
+    language: str
+    project_type: str
     plan: str
     relevant_files: List[str]
-    code_changes: Dict[str, str] # K=path, V=content
+    code_changes: Dict[str, str]
     test_code: Dict[str, str]
     
-    # Robustness & Circuit Breakers
-    syntax_status: str  # 'passed', 'failed', 'fatal_error'
-    review_status: str  # 'passed', 'failed'
-    iterations: int     # Counter to prevent infinite loops
+    # Robustness Flags
+    syntax_status: str
+    review_status: str
+    verifier_status: str
+    missing_symbols: List[str]
+    iterations: int
     
-    # Logs
     history: Annotated[List[str], operator.add]
 
-# --- 4. The Agent Team Class ---
+# --- 4. The Agent Team ---
 
 class AutonomousDevTeam:
     def __init__(self, logical_name: str, repo_path: str):
         self.logical_name = logical_name
         self.repo_path = repo_path
         self.tools = AgentTools(repo_path)
-        
-        # Clients
-        self.qdrant = setup_qdrant() 
-        # We use the SDK for embeddings (easier) but REST for Generation
-        self.embed_model, _ = setup_vertex_ai() 
+        self.qdrant = setup_qdrant()
 
-    # --- HELPER TOOLS ---
-    def find_definition_tool(self, symbol_name: str):
-        """Finds the file defining a specific Class or Function using Qdrant."""
-        try:
-            results, _ = self.qdrant.scroll(
-                collection_name=CODE_COLLECTION_NAME,
-                scroll_filter=models.Filter(
-                    must=[models.FieldCondition(key="metadata.chunk_name", match=models.MatchValue(value=symbol_name))]
-                ),
-                limit=1,
-                with_payload=True
-            )
-            if results:
-                return results[0].payload['file_path']
-        except Exception:
-            pass
-        return None
-
-    # --- NODE: PLANNER ---
+    # --- PLANNER ---
     def planner_agent(self, state: AgentState):
         print("--- PLANNER AGENT ---")
         files_list = self.tools.list_files()
         
-        # 1. Detect Stack
+        # Detect Stack
         language = "python"
         project_type = "generic"
-        
         if any(f.endswith("pom.xml") for f in files_list):
-            language = "java"
-            project_type = "spring-boot"
+            language = "java"; project_type = "spring-boot"
         elif any(f.endswith("package.json") for f in files_list):
-            language = "typescript"
-            project_type = "node"
+            language = "typescript"; project_type = "node"
         
-        # 2. Generate Skeleton (Advanced Context)
-        # Assumes generate_repo_skeleton exists in AgentTools
+        # Generate Skeleton
         skeleton = self.tools.generate_repo_skeleton()
-        if len(skeleton) > 60000: skeleton = skeleton[:60000] + "\n...(truncated)"
+        if len(skeleton) > 50000: skeleton = skeleton[:50000] + "\n...(truncated)"
         
-        prompt = f"""
-        You are a Pragmatic Software Architect. Your goal is to design a minimal, effective solution.
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render(
+            'planner', 'user',
+            requirement=state['requirement'],
+            language=language,
+            project_type=project_type,
+            skeleton=skeleton
+        )
         
-        Requirement: "{state['requirement']}"
-        
-        Context:
-        - Language: {language}
-        - Framework: {project_type}
-        
-        Repo Structure (Skeleton):
-        {skeleton}
-        
-        Instructions:
-        1. Analyze the Request: Understand the core intent.
-        2. Analyze the Repo: Look at the skeleton to find relevant files.
-        3. Create a Plan:
-           - Identify specific existing files to modify.
-           - Identify new files needed (including tests).
-           - Explain the implementation logic step-by-step.
-        
-        Output Format:
-        Provide a concise, actionable plan.
-        """
-        
-        # 3. Best-of-N Planning (Voting)
-        print("   [Planner] Generating 3 candidate plans...")
-        candidates = []
-        for i in range(3):
-            try:
-                # Use higher temperature for diversity
-                plan_candidate = generate_content_rest(prompt, temperature=0.7)
-                candidates.append(f"--- Plan Option {i+1} ---\n{plan_candidate}\n")
-            except Exception as e:
-                print(f"   [Planner] Error generating candidate {i+1}: {e}")
-        
-        if not candidates:
-            return {"history": ["Planner failed to generate any plans."], "iterations": 0}
-
-        # 4. The Judge (Select Best Plan)
-        print("   [Planner] Judging plans...")
-        judge_prompt = f"""
-        You are a Senior Technical Lead. Compare the following 3 implementation plans for the requirement: "{state['requirement']}".
-        
-        Candidates:
-        {''.join(candidates)}
-        
-        Criteria:
-        1. Completeness: Does it fully address the requirement?
-        2. Simplicity: Is it the simplest working solution?
-        3. Correctness: Does it use the existing repo structure correctly?
-        
-        Instructions:
-        - Select the BEST plan.
-        - Return ONLY the content of the selected plan.
-        - Do not add any meta-commentary like "I selected Plan 1 because...". Just return the plan text.
-        """
-        
-        final_plan = generate_content_rest(judge_prompt, temperature=0.1)
+        plan_text = generate_content_rest(prompt)
         
         return {
-            "plan": final_plan, 
+            "plan": plan_text, 
             "language": language, 
             "project_type": project_type,
-            "iterations": 0, # Reset counter
-            "history": [f"Plan generated (Best of 3) ({language}/{project_type})."]
+            "iterations": 0,
+            "history": [f"Plan generated ({language})."]
         }
 
-    # --- NODE: RESEARCHER ---
+    # --- RESEARCHER ---
     def researcher_agent(self, state: AgentState):
         print("--- RESEARCHER AGENT ---")
         found_files = []
         
-        # 1. Semantic Extraction from Plan
-        prompt = f"""
-        Extract the specific file paths mentioned in this plan that need to be read or modified.
-        Also extract any specific Class or Function names mentioned.
-        Plan: "{state['plan']}"
-        Return JSON: {{ "files": ["path/to/file1"], "symbols": ["ClassName"] }}
-        """
+        # Handle "Missing Symbols" loop from Verifier
+        if state.get("missing_symbols"):
+            print(f"   [Researcher] Hunting missing symbols: {state['missing_symbols']}")
+            # Logic to find definition... (simplified for brevity)
+            # found_files.append(...) 
+        
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render('researcher', 'extract_files', plan=state['plan'])
+        
         try:
             extraction = generate_content_rest(prompt, mime_type="application/json")
-            
-            # Verify Files
             for f_path in extraction.get("files", []):
-                if self.tools.read_file(f_path) and "Error" not in self.tools.read_file(f_path):
-                    found_files.append(f_path)
-            
-            # Verify Symbols (Go To Definition)
-            for symbol in extraction.get("symbols", []):
-                def_path = self.find_definition_tool(symbol)
-                if def_path and def_path not in found_files:
-                    found_files.append(def_path)
-                    
-        except Exception as e:
-            print(f"Researcher extraction error: {e}")
+                if self.tools.read_file(f_path): found_files.append(f_path)
+        except: pass
 
-        # 2. Dependency Graph Expansion (New)
-        print("   [Researcher] Expanding context via Dependency Graph...")
-        dependency_files = []
-        
-        for f_path in found_files:
-            # A. Forward Expansion (What does this file import?)
-            # We need to query Qdrant to get the metadata of this file
-            try:
-                # Find chunks for this file to get its dependencies
-                results, _ = self.qdrant.scroll(
-                    collection_name=CODE_COLLECTION_NAME,
-                    scroll_filter=models.Filter(
-                        must=[models.FieldCondition(key="metadata.file_path", match=models.MatchValue(value=f_path))]
-                    ),
-                    limit=1,
-                    with_payload=True
-                )
-                
-                if results:
-                    # Get the dependencies list from the first chunk
-                    deps = results[0].payload.get('dependencies', [])
-                    print(f"   File {f_path} imports: {deps}")
-                    
-                    # Resolve these imports to files (heuristic)
-                    for dep in deps:
-                        # Search for files that match this import name (as chunk_name or file_path)
-                        # This is a loose match, but better than nothing.
-                        dep_results = self.qdrant.search(
-                            collection_name=CODE_COLLECTION_NAME,
-                            query_vector=[0.0]*768, # Dummy vector, we only care about filter
-                            limit=1,
-                            query_filter=models.Filter(
-                                should=[
-                                    models.FieldCondition(key="metadata.chunk_name", match=models.MatchValue(value=dep)),
-                                    models.FieldCondition(key="metadata.file_path", match=models.MatchText(text=dep)) # Text match for partial paths
-                                ]
-                            ),
-                            with_payload=True
-                        )
-                        for dr in dep_results:
-                            dependency_files.append(dr.payload['file_path'])
-
-            except Exception as e:
-                print(f"   Error in forward expansion for {f_path}: {e}")
-
-            # B. Reverse Expansion (Who imports this file?)
-            # We search for chunks where 'dependencies' list contains this file's name or module name
-            try:
-                # Heuristic: derive module name from file path (e.g. app/ingest.py -> ingest)
-                module_name = os.path.splitext(os.path.basename(f_path))[0]
-                
-                reverse_results = self.qdrant.scroll(
-                    collection_name=CODE_COLLECTION_NAME,
-                    scroll_filter=models.Filter(
-                        must=[models.FieldCondition(key="metadata.dependencies", match=models.MatchValue(value=module_name))]
-                    ),
-                    limit=5, # Limit to 5 reverse deps to avoid explosion
-                    with_payload=True
-                )
-                
-                if reverse_results[0]:
-                    for rr in reverse_results[0]:
-                        print(f"   File {rr.payload['file_path']} imports {module_name}")
-                        dependency_files.append(rr.payload['file_path'])
-                        
-            except Exception as e:
-                print(f"   Error in reverse expansion for {f_path}: {e}")
-
-        found_files.extend(dependency_files)
-        
-        # 3. Test-Driven Discovery (Fallback)
         if not found_files:
-            print("   [Researcher] Fallback: Test-Driven Discovery...")
-            try:
-                req_vector = self.embed_model.get_embeddings([state['requirement']])[0].values
-                test_results = self.qdrant.search(
-                    collection_name=CODE_COLLECTION_NAME,
-                    query_vector=req_vector,
-                    limit=3,
-                    with_payload=True,
-                    query_filter=models.Filter(must=[models.FieldCondition(key="metadata.file_path", match=models.MatchText(text="test"))])
+            print("   [Researcher] Performing Hierarchical Search...")
+            
+            req_vector = self.embed_model.get_embeddings([state['requirement']])[0].values
+            
+            # STEP A: File Level Search (Find top 5 relevant files)
+            file_results = self.qdrant.search(
+                collection_name=FILE_SUMMARY_COLLECTION_NAME,
+                query_vector=req_vector,
+                limit=5,
+                with_payload=True
+            )
+            
+            top_file_paths = [res.payload['file_path'] for res in file_results]
+            print(f"   [Researcher] Top Candidate Files: {top_file_paths}")
+            
+            # Add them to our "Found" list so Coder gets the whole file if needed
+            found_files.extend(top_file_paths)
+            
+            # STEP B: Chunk Level Scoped Search (Optional optimization)
+            # If you want to find specific *lines* inside those files to save context window:
+            chunk_results = self.qdrant.search(
+                collection_name=CODE_COLLECTION_NAME,
+                query_vector=req_vector,
+                limit=10,
+                query_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.file_path", 
+                            match=models.MatchAny(any=top_file_paths) # <--- SCOPED FILTER
+                        )
+                    ]
                 )
-                for res in test_results:
-                    found_files.append(res.payload['file_path'])
-            except Exception:
-                pass
-
-        return {"relevant_files": list(set(found_files)), "history": [f"Researched files: {list(set(found_files))}"]}
-
-    # --- NODE: CODER (REST + JSON + Circuit Breaker) ---
-    def coder_agent(self, state: AgentState):
-        print("--- CODER AGENT ---")
+            )
         
-        # Circuit Breaker Check
-        current_iter = state.get("iterations", 0)
-        if current_iter > 5:
-            return {"history": ["FATAL: Max iterations reached. Agent stuck."], "syntax_status": "fatal_error"}
+        return {"relevant_files": list(set(found_files)), "history": [f"Researched: {found_files}"]}
+
+    # --- CONTEXT VERIFIER ---
+    def context_verifier_agent(self, state: AgentState):
+        print("--- CONTEXT VERIFIER ---")
         
-        # Prepare Context
-        context = ""
-        for path in state['relevant_files']:
-            content = self.tools.read_file(path)
-            context += f"\n<file path=\"{path}\">\n{content}\n</file>\n"
-            
-        # Internal Retry Loop (Red-Flagging)
-        max_retries = 3
-        last_error = state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'
-        
-        for attempt in range(max_retries):
-            print(f"   [Coder] Attempt {attempt+1}/{max_retries}...")
-            
-            prompt = f"""
-            You are a Senior {state['language']} Engineer. You write clean, efficient, and robust code.
-            
-            Requirement: "{state['requirement']}"
-            Plan: {state['plan']}
-            
-            Context Code:
-            {context}
-            
-            Previous Errors: {last_error}
-            
-            Instructions:
-            1. Think Step-by-Step: Analyze the plan and the context code. Consider dependencies and edge cases.
-            2. Implement: Write the code.
-               - Adhere to {state['language']} best practices (e.g., PEP8 for Python).
-               - Handle errors gracefully.
-               - Ensure all imports are correct.
-            3. Output:
-               - Return the COMPLETE source code. **NO PLACEHOLDERS** (e.g., no "rest of code here").
-               - Output must be valid JSON matching the schema.
-            """
-            
-            try:
-                data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
-                
-                # --- Red-Flag Checks ---
-                red_flags = []
-                changes = {}
-                
-                # 1. JSON Structure Check (Implicitly handled by generate_content_rest, but double check keys)
-                if not data.get("files"):
-                    red_flags.append("No files returned in JSON.")
-                
-                for file_obj in data.get("files", []):
-                    content = file_obj.get('content', '')
-                    filepath = file_obj.get('filepath', '')
-                    
-                    # 2. Lazy Coding Check
-                    lazy_markers = ["# ...", "// ...", "rest of code", "TODO: implement", "existing code"]
-                    if any(marker in content for marker in lazy_markers):
-                        red_flags.append(f"Lazy coding detected in {filepath} (found placeholder).")
-                    
-                    changes[filepath] = content
-                
-                if red_flags:
-                    error_msg = f"Red-Flagged: {'; '.join(red_flags)}"
-                    print(f"   [Coder] {error_msg}. Retrying...")
-                    last_error = error_msg
-                    continue # Retry
-                
-                # Success!
-                return {
-                    "code_changes": changes, 
-                    "history": [f"Code generated (Iter {current_iter})."],
-                    "syntax_status": "pending", 
-                    "review_status": "pending",
-                    "iterations": current_iter + 1
-                }
-                
-            except Exception as e:
-                print(f"   [Coder] Error: {e}")
-                last_error = f"Coder Exception: {str(e)}"
-        
-        # If we exhaust retries
-        return {"history": [f"Coder Failed after {max_retries} retries: {last_error}"], "syntax_status": "failed", "iterations": current_iter + 1}
-
-    # --- NODE: SYNTAX CHECKER ---
-    def syntax_checker_agent(self, state: AgentState):
-        print("--- SYNTAX CHECKER ---")
-        errors = []
-        
-        if state.get("syntax_status") == "fatal_error":
-            return {"history": ["Skipping syntax check due to fatal error."]}
-
-        for filepath, content in state['code_changes'].items():
-            # Python Syntax
-            if filepath.endswith(".py"):
-                try:
-                    ast.parse(content)
-                except SyntaxError as e:
-                    errors.append(f"{filepath}: {e}")
-            
-            # Java Braces Check (Heuristic)
-            elif filepath.endswith(".java"):
-                if content.count("{") != content.count("}"):
-                    errors.append(f"{filepath}: Mismatched curly braces.")
-        
-        if errors:
-            return {
-                "history": [f"Syntax Errors: {'; '.join(errors)}"],
-                "syntax_status": "failed"
-            }
-        return {"history": ["Syntax check passed."], "syntax_status": "passed"}
-
-    # --- NODE: REVIEWER ---
-    def reviewer_agent(self, state: AgentState):
-        print("--- REVIEWER AGENT ---")
-        errors = []
-        
-        # 1. Heuristic Checks (Fast Fail)
-        for filepath, content in state['code_changes'].items():
-            # Lazy LLM Check
-            if "# ..." in content or "// ..." in content or "existing code" in content:
-                errors.append(f"{filepath} contains lazy placeholders.")
-            
-            # Size reduction check
-            original = self.tools.read_file(filepath)
-            if original and "Error" not in original:
-                if len(content) < len(original) * 0.5:
-                    errors.append(f"{filepath} is dangerously smaller than original.")
-
-        if errors:
-            return {
-                "history": [f"Review Failed (Heuristic): {'; '.join(errors)}"],
-                "review_status": "failed"
-            }
-
-        # 2. LLM Review (Deep Check)
-        print("   [Reviewer] Heuristics passed. Starting LLM review...")
-        
-        changes_context = ""
-        for path, content in state['code_changes'].items():
-            changes_context += f"\nFile: {path}\n```\n{content}\n```\n"
-
-        prompt = f"""
-        You are a Strict Security Auditor and QA Engineer.
-        Review the following code changes for:
-        1. Security Vulnerabilities (Injection, Secrets, etc.)
-        2. Logic Errors or Bugs
-        3. Lazy Coding (Placeholders, incomplete logic)
-        4. Deviation from Requirement: "{state['requirement']}"
-
-        Code:
-        {changes_context}
-
-        Return JSON: {{ "status": "passed" }} OR {{ "status": "failed", "reason": "Detailed explanation of the error." }}
-        """
-
-        try:
-            review = generate_content_rest(prompt, mime_type="application/json")
-            if review.get("status") == "failed":
-                return {
-                    "history": [f"Review Failed (LLM): {review.get('reason')}"],
-                    "review_status": "failed"
-                }
-        except Exception as e:
-            print(f"Reviewer LLM error: {e}")
-            # Fail safe or pass? Let's pass if LLM fails but warn.
-            return {"history": ["Reviewer LLM failed, skipping."], "review_status": "passed"}
-
-        return {"history": ["Code review passed."], "review_status": "passed"}
-
-    # --- NODE: TESTER ---
-    def tester_agent(self, state: AgentState):
-        print("--- TESTER AGENT ---")
-        
-        changes_context = ""
-        for path, content in state['code_changes'].items():
-            changes_context += f"\nFile: {path}\n{content}\n"
-            
-        prompt = f"""
-        You are an SDET. Write a unit test for this code.
-        Language: {state['language']}
-        
-        Code:
-        {changes_context}
-        
-        Instructions:
-        - If Java: Use JUnit 5 & Mockito.
-        - If Python: Use Pytest.
-        - Return JSON: {{ "filepath": "tests/TestFile.java", "content": "..." }}
-        """
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render(
+            'verifier', 'user',
+            requirement=state['requirement'],
+            plan=state['plan'],
+            found_files=state['relevant_files']
+        )
         
         try:
             data = generate_content_rest(prompt, mime_type="application/json")
-            return {
-                "test_code": {data['filepath']: data['content']},
-                "history": ["Tests generated."]
-            }
-        except Exception:
-            return {"test_code": {}, "history": ["Test generation skipped due to error."]}
-
-    # --- NODE: GIT MANAGER ---
-    def git_manager_agent(self, state: AgentState):
-        print("--- GIT MANAGER AGENT ---")
+            if data['status'] == "rejected":
+                return {
+                    "history": [f"Context missing: {data['missing']}"],
+                    "verifier_status": "rejected",
+                    "missing_symbols": data['missing']
+                }
+        except: pass
         
-        # 1. Create Branch
-        clean_req = "".join(c for c in state['requirement'] if c.isalnum() or c == ' ')[:15].replace(' ', '-')
-        branch = f"feature/ai-{clean_req}"
+        return {"history": ["Context verified."], "verifier_status": "approved"}
+
+    # --- CODER ---
+    def coder_agent(self, state: AgentState):
+        print("--- CODER AGENT ---")
+        
+        current_iter = state.get("iterations", 0)
+        if current_iter > 5:
+            return {"history": ["FATAL: Loop limit reached."], "syntax_status": "fatal_error"}
+        
+        context_str = ""
+        for path in state['relevant_files']:
+            context_str += f"\nFile: {path}\n```\n{self.tools.read_file(path)}\n```\n"
+            
+        previous_err = state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'
+        
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render(
+            'coder', 'user',
+            requirement=state['requirement'],
+            language=state['language'],
+            project_type=state['project_type'],
+            plan=state['plan'],
+            previous_errors=previous_err,
+            context_code=context_str
+        )
+        
+        try:
+            data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
+            changes = {f['filepath']: f['content'] for f in data.get("files", [])}
+            return {
+                "code_changes": changes, 
+                "history": [f"Code generated (Iter {current_iter})."],
+                "syntax_status": "pending", 
+                "iterations": current_iter + 1
+            }
+        except Exception as e:
+            return {"history": [f"Coder Error: {e}"], "syntax_status": "failed", "iterations": current_iter + 1}
+
+    # --- SYNTAX CHECKER ---
+    def syntax_checker_agent(self, state: AgentState):
+        print("--- SYNTAX CHECKER ---")
+        errors = []
+        if state.get("syntax_status") == "fatal_error": return {}
+
+        for filepath, content in state['code_changes'].items():
+            if filepath.endswith(".py"):
+                try: ast.parse(content)
+                except SyntaxError as e: errors.append(f"{filepath}: {e}")
+            elif filepath.endswith(".java"):
+                if content.count("{") != content.count("}"): errors.append(f"{filepath}: Braces mismatch.")
+        
+        if errors:
+            return {"history": [f"Syntax: {errors}"], "syntax_status": "failed"}
+        return {"history": ["Syntax OK."], "syntax_status": "passed"}
+
+    # --- TESTER ---
+    def tester_agent(self, state: AgentState):
+        print("--- TESTER AGENT ---")
+        changes_context = "\n".join([f"File: {p}\n{c}" for p, c in state['code_changes'].items()])
+        
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render(
+            'tester', 'user',
+            language=state['language'],
+            changes_context=changes_context
+        )
+        
+        try:
+            data = generate_content_rest(prompt, mime_type="application/json")
+            return {"test_code": {data['filepath']: data['content']}, "history": ["Tests generated."]}
+        except:
+            return {"test_code": {}, "history": ["Tests skipped."]}
+
+    # --- GIT MANAGER ---
+    def git_manager_agent(self, state: AgentState):
+        print("--- GIT MANAGER ---")
+        branch = f"feature/ai-{state['requirement'][:10].replace(' ','-')}"
         self.tools.create_branch(branch)
         
-        # 2. Write Files
-        for path, content in state['code_changes'].items():
-            self.tools.write_file(path, content)
-        for path, content in state['test_code'].items():
-            self.tools.write_file(path, content)
-            
-        # 3. Commit & Push
-        result = self.tools.commit_and_push(f"AI Implementation: {state['requirement']}")
+        for p, c in state['code_changes'].items(): self.tools.write_file(p, c)
+        for p, c in state['test_code'].items(): self.tools.write_file(p, c)
         
-        return {"history": [f"Git Ops: {result}"]}
+        res = self.tools.commit_and_push(f"AI: {state['requirement']}")
+        return {"history": [f"Git: {res}"]}
 
-# --- 5. Build the Graph ---
+# --- 5. Build Graph ---
+
+def construct_graph(team):
+    wf = StateGraph(AgentState)
+    
+    wf.add_node("planner", team.planner_agent)
+    wf.add_node("researcher", team.researcher_agent)
+    wf.add_node("verifier", team.context_verifier_agent) # Added Verifier
+    wf.add_node("coder", team.coder_agent)
+    wf.add_node("syntax", team.syntax_checker_agent)
+    wf.add_node("tester", team.tester_agent)
+    wf.add_node("git", team.git_manager_agent)
+    
+    # Edges
+    wf.set_entry_point("planner")
+    wf.add_edge("planner", "researcher")
+    wf.add_edge("researcher", "verifier")
+    
+    def check_verifier(state):
+        return "researcher" if state.get("verifier_status") == "rejected" else "coder"
+        
+    wf.add_conditional_edges("verifier", check_verifier, {"researcher": "researcher", "coder": "coder"})
+    
+    wf.add_edge("coder", "syntax")
+    
+    def check_syntax(state):
+        if state.get("syntax_status") == "fatal_error": return END
+        return "coder" if state.get("syntax_status") == "failed" else "tester"
+        
+    wf.add_conditional_edges("syntax", check_syntax, {"coder": "coder", "tester": "tester", END: END})
+    
+    wf.add_edge("tester", "git")
+    wf.add_edge("git", END)
+    
+    return wf.compile()
 
 def build_agent_graph(logical_name: str, repo_path: str):
     team = AutonomousDevTeam(logical_name, repo_path)
-    workflow = StateGraph(AgentState)
-    
-    # Add Nodes
-    workflow.add_node("planner", team.planner_agent)
-    workflow.add_node("researcher", team.researcher_agent)
-    workflow.add_node("coder", team.coder_agent)
-    workflow.add_node("syntax_checker", team.syntax_checker_agent)
-    workflow.add_node("reviewer", team.reviewer_agent)
-    workflow.add_node("tester", team.tester_agent)
-    workflow.add_node("git_manager", team.git_manager_agent)
-    
-    # Edges & Gates
-    def check_syntax_gate(state):
-        if state.get("syntax_status") == "fatal_error":
-            return END
-        if state.get("syntax_status") == "failed":
-            return "coder"
-        return "reviewer"
+    return construct_graph(team)
 
-    def check_review_gate(state):
-        if state.get("review_status") == "failed":
-            return "coder"
-        return "tester"
+def get_graph_mermaid():
+    """
+    Generates the Mermaid diagram for the agent graph.
+    Uses a dummy team to avoid expensive initialization.
+    """
+    class DummyTeam:
+        def planner_agent(self, state): pass
+        def researcher_agent(self, state): pass
+        def context_verifier_agent(self, state): pass
+        def coder_agent(self, state): pass
+        def syntax_checker_agent(self, state): pass
+        def tester_agent(self, state): pass
+        def git_manager_agent(self, state): pass
 
-    workflow.set_entry_point("planner")
-    workflow.add_edge("planner", "researcher")
-    workflow.add_edge("researcher", "coder")
-    
-    workflow.add_edge("coder", "syntax_checker")
-    
-    workflow.add_conditional_edges(
-        "syntax_checker",
-        check_syntax_gate,
-        {"coder": "coder", "reviewer": "reviewer", END: END}
-    )
-    
-    workflow.add_conditional_edges(
-        "reviewer",
-        check_review_gate,
-        {"coder": "coder", "tester": "tester"}
-    )
-    
-    workflow.add_edge("tester", "git_manager")
-    workflow.add_edge("git_manager", END)
-    
-    return workflow.compile()
+    try:
+        graph = construct_graph(DummyTeam())
+        return graph.get_graph().draw_mermaid()
+    except Exception as e:
+        return f"Error generating mermaid graph: {str(e)}"

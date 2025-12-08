@@ -20,7 +20,7 @@ import {
 export class DataService {
   private apiUrl = 'http://localhost:8000'; // Backend API URL
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient) { }
 
   ingest(request: IngestRequest): Observable<IngestResponse> {
     return this.http.post<IngestResponse>(`${this.apiUrl}/ingest`, request);
@@ -48,6 +48,10 @@ export class DataService {
 
   getAgentStatus(logicalName: string): Observable<AgentStatusResponse> {
     return this.http.get<AgentStatusResponse>(`${this.apiUrl}/agent/status/${logicalName}`);
+  }
+
+  getAgentGraph(): Observable<{ mermaid: string }> {
+    return this.http.get<{ mermaid: string }>(`${this.apiUrl}/agent/graph`);
   }
 
   getSettingsData() {

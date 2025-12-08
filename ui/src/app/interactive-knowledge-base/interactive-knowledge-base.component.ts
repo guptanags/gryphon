@@ -7,7 +7,8 @@ import { marked } from 'marked';
 @Component({
   selector: 'app-interactive-knowledge-base',
   templateUrl: './interactive-knowledge-base.component.html',
-  styleUrls: ['./interactive-knowledge-base.component.scss']
+  styleUrls: ['./interactive-knowledge-base.component.scss'],
+  standalone: false
 })
 export class InteractiveKnowledgeBaseComponent {
   question: string = '';
@@ -17,7 +18,7 @@ export class InteractiveKnowledgeBaseComponent {
   codeContextHtml: SafeHtml = '';
   docContextHtml: SafeHtml = '';
 
-  constructor(private dataService: DataService, private sanitizer: DomSanitizer) {}
+  constructor(private dataService: DataService, private sanitizer: DomSanitizer) { }
 
   sendQuestion() {
     if (!this.question.trim()) {

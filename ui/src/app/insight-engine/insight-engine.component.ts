@@ -5,7 +5,8 @@ import { RepositoryStatus, IngestRequest } from '../api';
 @Component({
   selector: 'app-insight-engine',
   templateUrl: './insight-engine.component.html',
-  styleUrls: ['./insight-engine.component.scss']
+  styleUrls: ['./insight-engine.component.scss'],
+  standalone: false
 })
 export class InsightEngineComponent implements OnInit {
   repositories: RepositoryStatus[] = [];
@@ -13,7 +14,7 @@ export class InsightEngineComponent implements OnInit {
   gitRepo: string = '';
   loading: boolean = false;
 
-  constructor(private dataService: DataService) {}
+  constructor(private dataService: DataService) { }
 
   ngOnInit() {
     this.refreshRepositories();

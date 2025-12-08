@@ -6,7 +6,8 @@ import { RepositoryStatus } from '../api';
 @Component({
   selector: 'app-dashboard',
   templateUrl: './dashboard.component.html',
-  styleUrls: ['./dashboard.component.scss']
+  styleUrls: ['./dashboard.component.scss'],
+  standalone: false
 })
 export class DashboardComponent implements OnInit {
   repositories: RepositoryStatus[] = [];
@@ -16,7 +17,7 @@ export class DashboardComponent implements OnInit {
   averageQualityScore: number = 0;
   displayedColumns: string[] = ['logical_name', 'status', 'test_status'];
 
-  constructor(private dataService: DataService, private router: Router) {}
+  constructor(private dataService: DataService, private router: Router) { }
 
   openRepository(logicalName: string) {
     this.router.navigate(['/repository', logicalName]);
@@ -58,22 +59,22 @@ export class DashboardComponent implements OnInit {
   getGaugeArcPath(value: number, max: number): string {
     // Clamp value between 0 and max
     const percentage = Math.min(Math.max(value / max, 0), 1);
-    
+
     // Arc goes from 30 to 170 on x-axis (140 degrees)
     // Convert percentage to angle (0-140 degrees)
     const angle = percentage * 140;
     const radian = (angle - 90) * Math.PI / 180;
-    
+
     // Calculate end point
     const radius = 70;
     const centerX = 100;
     const centerY = 100;
     const endX = centerX + radius * Math.cos(radian);
     const endY = centerY + radius * Math.sin(radian);
-    
+
     // Determine if we need large arc flag
     const largeArc = angle > 70 ? 1 : 0;
-    
+
     return `M 30 100 A 70 70 0 ${largeArc} 1 ${endX} ${endY}`;
   }
 

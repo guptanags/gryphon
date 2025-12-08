@@ -1,7 +1,8 @@
 <!-- src/app/settings/settings.component.html -->
 <div class="settings-container">
   <h1>Settings</h1>
-
+  <p>Settings are temporarily disabled due to upgrade issues.</p>
+  <!--
   <mat-card class="card user-profile">
     <mat-card-header>
       <mat-card-title>User Profile</mat-card-title>
@@ -24,10 +25,12 @@
     </mat-card-header>
     <mat-card-content>
       <div class="preference-item" *ngFor="let pref of settingsData.preferences">
-        <mat-slide-toggle [id]="pref.name" [(ngModel)]="pref.enabled" (change)="updatePreference(pref)">
+        <mat-slide-toggle [id]="pref.name" [checked]="pref.enabled"
+          (change)="pref.enabled = $event.checked; updatePreference(pref)">
           {{ pref.name }}
         </mat-slide-toggle>
       </div>
     </mat-card-content>
   </mat-card>
+-->
 </div>

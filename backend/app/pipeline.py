@@ -121,8 +121,8 @@ def setup_qdrant():
         
         # Create Payload Indices for filtering
         try:
-            client.create_payload_index(collection_name=collection_name, field_name="metadata.repo_url", field_schema=models.PayloadSchemaType.KEYWORD)
-            client.create_payload_index(collection_name=collection_name, field_name="metadata.file_path", field_schema=models.PayloadSchemaType.TEXT)
+            client.create_payload_index(collection_name=collection_name, field_name="repo_url", field_schema=models.PayloadSchemaType.KEYWORD)
+            client.create_payload_index(collection_name=collection_name, field_name="file_path", field_schema=models.PayloadSchemaType.TEXT)
             client.create_payload_index(collection_name=collection_name, field_name="content_hash", field_schema=models.PayloadSchemaType.KEYWORD)
         except Exception:
             pass # Ignore if indices already exist
@@ -287,7 +287,8 @@ def _calculate_complexity(content: str) -> int:
 def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple[List, List]:
     code_chunks = []
     doc_chunks = []
-    
+    file_summaries = []
+
     for root, dirs, files in os.walk(repo_path):
         if ".git" in root: continue # Skip .git directory
         
@@ -307,6 +308,17 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                     with open(file_path, 'r', encoding='utf-8') as f:
                         code_bytes = f.read().encode('utf8')
                     
+                    # A. Generate Summary for the File
+                    # (In a real batched pipeline, you might queue this, but here we do it inline)
+                    # We only summarize if it's a "real" code file, not a tiny config
+                    if len(full_content) > 100:
+                        file_obj = {
+                            "file_path": relative_path,
+                            "content": full_content,
+                            "repo_url": repo_url
+                        }
+                        file_summaries.append(file_obj)
+
                     tree = parser.parse(code_bytes)
                     dependencies = _extract_imports(tree, config["language"], code_bytes)
                     for pattern_index, match_dict in query_cursor.matches(tree.root_node):
@@ -346,7 +358,7 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                     log.warning(f"Error parsing text {file_path}: {e}")
 
     log.info(f"Parsed {len(code_chunks)} code chunks and {len(doc_chunks)} text/markup chunks.")
-    return code_chunks, doc_chunks
+    return code_chunks, doc_chunks, file_summaries
 
 def parse_pdf(pdf_path: str) -> list:
     log.info(f"Parsing PDF: {pdf_path}")
@@ -470,33 +482,32 @@ def generate_documentation(model: GenerativeModel, code_chunks: list) -> list:
             continue
     return doc_chunks
 
-def generate_file_summary(model: GenerativeModel, file_content: str, file_path: str, repo_url: str) -> dict:
-    """Generates a high-level summary for the entire file."""
-    prompt = f"""
-    You are a Lead Developer. Summarize the purpose and responsibilities of this file in 1-2 sentences.
-    File: {file_path}
-    Content:
-    ```
-    {file_content[:10000]} 
-    ```
-    (Content truncated if too long)
+# 3. New Helper: Generate File Summary
+def generate_file_summary(model: GenerativeModel, file_path: str, content: str) -> dict:
+    """Generates a high-level summary of a file's responsibility."""
+    # Truncate content to fit context (e.g., first 500 lines are usually enough for a summary)
+    truncated_content = content[:15000] 
     
-    Output JSON: {{ "summary": "..." }}
+    prompt = f"""
+    Analyze this code file and provide a 1-sentence technical summary of its responsibility.
+    File Path: {file_path}
+    
+    Code:
+    {truncated_content}
+    
+    Response Format: "Handles user authentication and JWT token generation."
     """
     try:
-        res = model.generate_content([Part.from_text(prompt)], generation_config=GenerationConfig(response_mime_type="application/json"))
-        data = json.loads(res.text)
+        res = model.generate_content([Part.from_text(prompt)])
         return {
-            "content": data["summary"],
-            "metadata": {
-                "file_path": file_path,
-                "repo_url": repo_url,
-                "doc_type": "file_summary"
-            }
+            "file_path": file_path,
+            "summary": res.text.strip(),
+            "content_hash": compute_hash(res.text) # Hash of the summary itself
         }
     except Exception as e:
-        log.warning(f"Failed to generate summary for {file_path}: {e}")
+        log.warning(f"Summary generation failed for {file_path}: {e}")
         return None
+
 
 def _split_long_text(content: str, max_chars: int = MAX_EMBED_CHARS) -> list:
     """Split a long text into smaller segments while trying to split at newline boundaries.
@@ -652,7 +663,16 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
             
             try:
                 # Parse
-                code, docs = parse_codebase(path, url, branch)
+                code, docs, files = parse_codebase(path, url, branch)
+                
+                # Generate AI Summaries for Files
+                log.info(f"[{logical_name}] Generating File Level Summaries...")
+                for f in tqdm(files, desc="Summarizing Files"):
+                    summ = generate_file_summary(gen_model, f['file_path'], f['content'])
+                    if summ:
+                        summ['repo_url'] = f['repo_url']
+                        all_summaries.append(summ)
+                
                 all_code.extend(code)
                 all_docs.extend(docs)
                 
@@ -706,8 +726,17 @@ def run_ingestion_pipeline(logical_name: str, git_repo_list: list, confluence_pa
 
     if all_summaries:
         all_summaries, vecs = embed_chunks(emb_model, all_summaries)
-        store_in_qdrant(qdrant, FILE_SUMMARY_COLLECTION_NAME, all_summaries, vecs)
-        
+        # Convert to Qdrant Points
+        points = []
+        for i, summ in enumerate(all_summaries):
+            if vecs[i] is None: continue
+            points.append(models.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=vecs[i],
+                payload=summ
+            ))
+        qdrant.upsert(collection_name=FILE_SUMMARY_COLLECTION_NAME, points=points)
+
     log.info(f"[{logical_name}] Pipeline Complete.")
     return quality_score
 

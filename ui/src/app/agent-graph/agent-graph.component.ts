@@ -20,7 +20,8 @@ interface GraphEdge {
 @Component({
   selector: 'app-agent-graph',
   templateUrl: './agent-graph.component.html',
-  styleUrls: ['./agent-graph.component.scss']
+  styleUrls: ['./agent-graph.component.scss'],
+  standalone: false
 })
 export class AgentGraphComponent implements OnInit, OnDestroy, OnChanges {
   @Input() logicalName: string | null = null;
@@ -54,7 +55,7 @@ export class AgentGraphComponent implements OnInit, OnDestroy, OnChanges {
 
   private pollSub: Subscription | null = null;
 
-  constructor(private dataService: DataService) {}
+  constructor(private dataService: DataService) { }
 
   ngOnInit(): void {
     // Start polling if logicalName is present

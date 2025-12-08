@@ -1,2 +1,10 @@
 backend/app/__pycache__/
 backend/app/__pycache__/agent_graph.cpython-313.pyc
+ui/node_modules/
+ui/.angular/
+.DS_Store
+backend/.DS_Store
+backend/app/__pycache__/agent_graph.cpython-313.pyc
+backend/app/__pycache__/agent_graph.cpython-313.pyc
+backend/app/__pycache__/agent_tools.cpython-313.pyc
+backend/app/__pycache__/pipeline.cpython-313.pyc

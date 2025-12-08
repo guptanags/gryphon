@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import threading
-from agent_graph import build_agent_graph, AgentState
+from agent_graph import build_agent_graph, AgentState, get_graph_mermaid
 # --- NEW: SQLAlchemy Imports ---
 from sqlalchemy.orm import Session
 import models
@@ -556,6 +556,14 @@ def get_agent_status(logical_name: str):
         current_step=data.get("current_step", "unknown"),
         logs=data["logs"]
     )
+
+@app.get("/agent/graph")
+def get_graph_visualization():
+    """
+    Returns the Mermaid JS graph definition for the agent workflow.
+    """
+    mermaid_graph = get_graph_mermaid()
+    return {"mermaid": mermaid_graph}
 # --- Run the API ---
 if __name__ == "__main__":
     print("Running API server locally on http://localhost:8000")

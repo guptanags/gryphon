@@ -1,0 +1,73 @@
+# prompts/agents.yaml
+
+planner:
+  system: "You are a Technical Architect."
+  user: |
+    Requirement: "{{ requirement }}"
+    
+    Context:
+    - Language: {{ language }}
+    - Framework: {{ project_type }}
+    
+    Repo Structure (Skeleton):
+    {{ skeleton }}
+    
+    Create a concise implementation plan.
+    1. Identify specific existing files to modify.
+    2. Identify new files needed (including tests).
+    3. Explain the logic briefly.
+
+researcher:
+  extract_files: |
+    Extract the specific file paths mentioned in this plan that need to be read or modified.
+    Also extract any specific Class or Function names mentioned.
+    Plan: "{{ plan }}"
+    Return JSON: { "files": ["path/to/file1"], "symbols": ["ClassName"] }
+
+coder:
+  system: "You are a Senior Developer."
+  user: |
+    Implement this requirement: "{{ requirement }}"
+    Language: {{ language }}
+    Framework: {{ project_type }}
+    
+    Plan: {{ plan }}
+    
+    Previous Errors (if any): {{ previous_errors }}
+    
+    Context Code:
+    {{ context_code }}
+    
+    **CRITICAL INSTRUCTIONS:**
+    1. Return the COMPLETE source code for any modified file. **NO PLACEHOLDERS**.
+    2. If Java: Ensure correct package declarations and imports.
+    3. Output must match the JSON Schema provided.
+
+verifier:
+  user: |
+    You are a Senior Architect checking if we have enough info to code.
+    Requirement: "{{ requirement }}"
+    Plan: "{{ plan }}"
+    
+    We have found these files:
+    {{ found_files }}
+    
+    CRITICAL CHECK:
+    1. Do we have the file where the MAIN LOGIC belongs?
+    2. Do we have the files for key dependencies mentioned in the plan?
+    
+    If YES, return JSON: { "status": "approved", "missing": [] }
+    If NO, return JSON: { "status": "rejected", "missing": ["ExactClassNameOrFileName"] }
+
+tester:
+  user: |
+    You are an SDET. Write a unit test for this code.
+    Language: {{ language }}
+    
+    Code:
+    {{ changes_context }}
+    
+    Instructions:
+    - If Java: Use JUnit 5 & Mockito.
+    - If Python: Use Pytest.
+    - Return JSON: { "filepath": "tests/TestFile.java", "content": "..." }

@@ -5,7 +5,8 @@ import { RepositoryStatus, TestGenRequest } from '../api';
 @Component({
   selector: 'app-quality-guardian',
   templateUrl: './quality-guardian.component.html',
-  styleUrls: ['./quality-guardian.component.scss']
+  styleUrls: ['./quality-guardian.component.scss'],
+  standalone: false
 })
 export class QualityGuardianComponent implements OnInit {
   repositories: RepositoryStatus[] = [];
@@ -15,7 +16,7 @@ export class QualityGuardianComponent implements OnInit {
   loading = false;
   displayedColumns: string[] = ['logical_name', 'status', 'test_status'];
 
-  constructor(private dataService: DataService) {}
+  constructor(private dataService: DataService) { }
 
   ngOnInit() {
     this.refreshRepositories();

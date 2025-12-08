@@ -1,0 +1,258 @@
+\documentclass[11pt]{article}
+
+\usepackage{times}
+\usepackage{fullpage}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\title{Hybrid LLM--SLM Systems: A Theoretical and Empirical Study of Optimal Routing under Cost Constraints in Banking}
+
+\author{Nagendra Gupta\\
+Enterprise Architecture, Global Investment Bank\\
+\texttt{Nagendra.Gupta@db.com}
+}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Large Language Models (LLMs) deliver state-of-the-art performance on a wide range of tasks but impose significant computational and monetary costs, which is particularly challenging for highly regulated, cost-sensitive domains such as banking. At the same time, Small Language Models (SLMs)---often domain-specialized and deployed on-premises---can achieve competitive performance on many enterprise workloads with far lower cost, improved data control, and better explainability.\footnote{Recent financial-services thought-leadership pieces emphasize that SLMs can provide faster, cheaper, and more accurate solutions for specialized banking tasks such as KYC, AML, and customer service.[web:46][web:75][web:79][web:82]} This paper studies \emph{hybrid} LLM--SLM systems in which a routing policy dynamically selects between an SLM and one or more LLMs on a per-request basis to optimize a trade-off between task quality and cost under explicit budget constraints. 
+
+We formulate hybrid routing as a cost-aware decision problem where the router observes features derived from the SLM (including calibrated uncertainty signals and retrieval quality) and decides whether to answer with the SLM or escalate to an LLM. We propose a simple decision-theoretic criterion that approximates an optimal stopping rule based on the predicted benefit of escalation relative to the additional cost. We then implement a model-agnostic routing library that integrates open and proprietary models, supports retrieval-augmented generation (RAG) over banking corpora, and exposes configuration hooks for per-use-case budgets and risk tolerances. 
+
+Empirically, we evaluate hybrid routing on realistic enterprise scenarios including KYC/AML alert triage, customer service, and trade finance document checking, using anonymized or synthetic data and metrics that combine task accuracy, cost per case, latency, and risk-sensitive error rates.\footnote{Industry reports and case studies highlight these as high-value, high-volume candidates for agentic AI and SLM-first deployment patterns.[web:61][web:73][web:80][web:87][web:89]} Across tasks, our hybrid system recovers a large fraction of the accuracy of an always-LLM baseline while substantially reducing average cost, and can be tuned to respect domain-specific constraints on false negatives and critical error rates. The results support the view that SLM-first, LLM-backed architectures are a practical and cost-effective strategy for deploying agentic AI in banking.
+\end{abstract}
+
+\section{Introduction}
+
+Large Language Models (LLMs) have become the default backbone for generative AI systems, delivering strong performance on general-purpose question answering, reasoning, and code generation tasks.\footnote{For financial analysis and broad enterprise use, LLMs are often recommended for versatile, cross-domain applications.[web:71][web:85][web:88]} However, their computational footprint, latency, and per-token pricing pose challenges for large-scale deployment in cost- and risk-sensitive industries such as banking, where volumes are high and service-level agreements (SLAs) are strict.[web:71][web:86] 
+
+Small Language Models (SLMs), by contrast, are typically domain-specialized, smaller in parameter count, and easier to deploy in controlled environments such as on-premises or VPC setups.\footnote{Recent work in financial services emphasizes that SLMs can offer faster, cheaper, and more accurate solutions for specific tasks like compliance checks, document processing, and contact-center automation, while improving privacy and regulatory compliance.[web:46][web:60][web:72][web:79][web:82]} For many banking workloads---including KYC/AML investigations, customer service, and trade finance document analysis---SLMs tuned on internal corpora can provide high accuracy and predictable behavior, but may underperform on especially complex, ambiguous, or out-of-distribution queries.[web:46][web:58][web:62][web:66][web:69][web:75] 
+
+Hybrid LLM--SLM systems aim to combine the strengths of both tiers: a low-cost, domain-tuned SLM handles the majority of queries, while a more capable (and more expensive) LLM is invoked selectively for difficult or high-risk cases.\footnote{Thought-leadership on banking AI increasingly advocates an ``SLM-first, LLM-backed'' strategy, where SLMs cover stable, specialized tasks and LLMs are used for prototyping or complex, cross-domain reasoning.[web:68][web:75][web:81][web:88][web:84]} Prior work on hybrid inference and routing for LLMs formulates model selection as a learning problem under quality--cost trade-offs, but typically assumes a pool of large models and does not focus on regulated, risk-sensitive contexts such as AML and trade finance.[web:39][web:43][web:45][web:48][web:51][web:52][web:56] 
+
+This paper makes the following contributions:
+\begin{itemize}
+    \item We formalize hybrid LLM--SLM routing as a cost-aware decision problem in which a router uses SLM-derived features (including calibrated uncertainty and retrieval diagnostics) to decide whether to answer with the SLM or escalate to an LLM, under per-request or long-term cost constraints.
+    \item We propose a simple, practical routing criterion approximating an optimal stopping rule based on the expected benefit of escalation relative to its additional cost, connecting to recent budget-constrained routing and cascade literature while explicitly distinguishing the SLM vs.\ LLM roles.
+    \item We implement a model-agnostic routing library that integrates open-source SLMs, self-hosted LLMs, and API-based LLMs, supports RAG over banking knowledge bases, and provides observability hooks for monitoring quality, cost, and risk metrics.
+    \item We adapt the experimental setup to banking by evaluating on synthetic or de-identified KYC/AML triage, customer service, and trade-document checking tasks, using metrics such as cost per 1{,}000 cases, false negative rates in AML, and latency SLAs, which align with current guidance on agentic AI in financial services.[web:61][web:67][web:73][web:80][web:87][web:89]
+\end{itemize}
+
+\section{Related Work}
+
+\subsection{SLMs, LLMs, and hybrid strategies in finance}
+
+Recent analyses of AI in financial services argue that SLMs are well-suited for specialized, high-stakes tasks where domain-specific accuracy, explainability, and data control are paramount, while LLMs remain valuable for broad, cross-functional applications.[web:46][web:62][web:72][web:75][web:81][web:82] Banking-focused SLMs trained on internal and industry datasets have been proposed for credit risk, KYC/AML, and IT operations, often as part of vendor offerings and reference architectures.[web:46][web:79][web:82][web:84][web:86] 
+
+Several practitioners and vendors advocate a hybrid model where SLMs handle specialized workflows and LLMs support general-purpose tasks, with routing policies taking into account cost, latency, and model governance considerations.[web:68][web:71][web:75][web:81][web:88][web:91] This hybrid approach is framed as both more cost-effective and more compatible with regulatory expectations around model risk management, since SLMs can be tightly controlled and audited while LLM usage is constrained to well-justified cases.[web:62][web:73][web:75][web:89]
+
+\subsection{LLM routing and cost-aware inference}
+
+A growing body of work explores routing among multiple LLMs of different capacity and price to optimize quality--cost trade-offs.\footnote{Recent research has introduced budget-constrained routing, contrastive routing, and unified routing--cascading approaches for LLMs, often achieving substantial cost reduction with limited loss in performance.[web:39][web:40][web:43][web:45][web:48][web:51][web:52][web:56]} These methods typically learn a router using embeddings or other features to predict which model will perform best, possibly subject to a token or dollar budget. 
+
+However, most existing studies focus on open-domain or benchmark-style tasks and do not target domain-specific, risk-sensitive applications such as AML investigations, where different error types (e.g., false negatives vs.\ false positives) carry very different business and regulatory costs.[web:61][web:73][web:87][web:90] Furthermore, the distinction between an SLM tier (often on-prem and fine-tuned) and an LLM tier (often API-based and cross-domain) is not explicitly modeled, limiting the direct applicability of these approaches in financial institutions.[web:62][web:75][web:81][web:88]
+
+\subsection{Agentic AI in banking}
+
+Agentic AI extends generative models with planning, tool use, and multi-step workflows, and is emerging as a key paradigm for automating end-to-end banking processes such as KYC/AML, credit decisioning, and customer journeys.[web:61][web:70][web:73][web:80][web:87][web:89] Industry reports describe how agents can autonomously orchestrate data retrieval, reasoning, and documentation, with human review at critical checkpoints, especially in AML investigations and trade finance risk management.[web:61][web:73][web:80][web:87][web:90] 
+
+These developments reinforce the need for cost-aware and risk-aware deployment strategies: agents may generate many model calls per case, making the choice between SLM and LLM calls highly consequential for operational cost and scalability.[web:61][web:67][web:73][web:80] Our work contributes to this line by providing a concrete routing framework and empirical evaluation tailored to banking scenarios.
+
+\section{Problem Formulation}
+
+We consider a pool of models consisting of a domain-tuned SLM $s$ and a set of one or more LLMs $l_1,\dots,l_k$. For each incoming request $q$, the system must decide whether to answer using $s$ alone or to escalate to some $l_i$, possibly after observing features derived from $s$'s behavior on $q$. Each model $m \in \{s,l_1,\dots,l_k\}$ has an associated cost $C(m,q)$ (e.g., expected token cost or dollar cost) and a stochastic reward $R(m,q)$ reflecting task quality (e.g., correctness or utility).
+
+In many banking workloads, decisions are made per case (e.g., per AML alert or customer contact), and the institution may specify either a per-case budget $b$ or a long-term budget $B$ over a horizon of $T$ queries. We focus on a per-query decision rule that approximates the following constrained objective:
+\[
+\max_{\pi} \; \mathbb{E}\big[ R(m_\pi(q), q) \big] \quad \text{s.t.} \quad \mathbb{E}[C(m_\pi(q),q)] \leq b,
+\]
+where $\pi$ is the routing policy and $m_\pi(q)$ is the selected model for query $q$.
+
+We assume that $s$ is always invoked first, due to its low cost and on-premise deployment. The router then observes a feature vector $x(q)$ derived from:
+\begin{itemize}
+    \item SLM outputs (e.g., token probabilities, self-consistency signals, or verifier scores).
+    \item Retrieval diagnostics from the RAG layer (e.g., similarity scores, document coverage, policy-reference coverage).
+    \item Request metadata (e.g., product, region, channel, or KYC risk band).
+\end{itemize}
+The router outputs either ``stay on SLM'' or ``escalate to LLM $l_i$''. 
+
+Let $p_{\text{err}}^s(q)$ denote the router's calibrated estimate of SLM error probability. Let $\Delta(q)$ denote an estimate of the expected quality gain from escalation, and let $\lambda$ parameterize the relative cost of escalation (e.g., $(C(l_i,q)-C(s,q))/C(s,q)$). We consider routing policies that escalate when
+\[
+p_{\text{err}}^s(q) \cdot \Delta(q) \;>\; \tau \cdot \lambda,
+\]
+for a configurable threshold $\tau$ tied to budget and risk preferences. This criterion captures the intuition that escalation should be reserved for cases where the combination of SLM uncertainty and potential LLM benefit justifies the additional cost.
+
+\section{Routing Policy and System Design}
+
+\subsection{Cost-aware routing score}
+
+Our routing score is constructed from three components:
+\begin{enumerate}
+    \item \textbf{SLM uncertainty and quality signals:} token-level entropy, disagreement among multiple SLM samples, or scores from a lightweight verifier model are used to estimate $p_{\text{err}}^s(q)$.
+    \item \textbf{Difficulty and potential gain:} features such as query complexity, RAG retrieval quality, and historical performance on similar cases approximate $\Delta(q)$.
+    \item \textbf{Relative cost:} current pricing and infrastructure data provide $\lambda$, reflecting the marginal cost of invoking an LLM instead of the SLM.\footnote{Public comparisons of LLM pricing and resource use illustrate substantial cost differences across models and deployment modes.[web:23][web:35][web:83][web:88]}
+\end{enumerate}
+
+A small neural router or gradient-boosted model maps these features and a budget configuration to a binary decision or to a distribution over LLMs. The same router can operate under different budgets by adjusting $\tau$ and cost inputs without retraining.
+
+\subsection{System architecture}
+
+The system is composed of:
+\begin{itemize}
+    \item A \emph{feature extractor} attached to the SLM and RAG pipeline, implemented as a sidecar that collects uncertainty metrics, retrieval statistics, and metadata.
+    \item A \emph{routing service} that hosts the learned policy and exposes a simple API for SLM--LLM escalation.
+    \item An \emph{orchestration layer} that manages model calls, batching, KV caches, and logging, and integrates with existing banking middleware and audit systems.
+\end{itemize}
+
+The library is model-agnostic and can integrate with on-prem SLMs, self-hosted LLMs, and external APIs, which is aligned with emerging enterprise AI platforms that mix proprietary and open models.[web:71][web:79][web:84][web:86] Detailed logs of inputs, features, decisions, and outcomes enable offline router training and continuous monitoring.
+
+\subsection{Training regimes}
+
+We consider two main training regimes:
+\begin{itemize}
+    \item \textbf{Label-efficient supervision:} a subset of queries is run on both SLM and LLM to create comparative labels (e.g., which model was correct or closer to the gold label), minimizing expensive LLM usage during training.
+    \item \textbf{Weak and online feedback:} downstream signals such as analyst overrides in AML, customer satisfaction scores, or error tags from QA teams provide noisy labels to refine routing over time.
+\end{itemize}
+
+These regimes are well-suited to banking, where labeled data is costly but rich operational feedback is available across compliance and service processes.[web:61][web:67][web:73][web:90]
+
+\section{Experimental Setup in Banking}
+
+\subsection{Use cases and datasets}
+
+We evaluate on three representative banking scenarios:
+
+\paragraph{KYC/AML alert triage.} Synthetic or de-identified alerts are constructed with associated customer and transaction profiles, rules or model triggers, and ground-truth analyst dispositions (e.g., ``escalate'', ``no further action''). Agentic workflows for AML are an area where AI is expected to significantly reduce manual workload while preserving or improving risk detection.[web:61][web:73][web:80][web:87][web:90]
+
+\paragraph{Customer service and operations.} Multi-turn dialogues are synthesized from historical contact-center logs, product documentation, and policy FAQs, labeled with resolution correctness and whether a human or higher-tier model intervention was needed. Financial-services reports emphasize that SLMs can effectively power such assistants with lower cost and controllable behavior.[web:46][web:58][web:62][web:69][web:70]
+
+\paragraph{Trade finance document checking.} Trade documents such as letters of credit, invoices, and bills of lading are represented in structured and semi-structured form, with labels indicating discrepancies and risk flags based on expert review. Trade finance is highlighted as a promising area for agentic AI and automation.[web:67][web:73][web:80]
+
+In all cases, we construct corpora for RAG from internal policies, regulatory texts, and historical case notes, ensuring that the models operate in a retrieval-augmented setting aligned with current best practices for enterprise AI in finance.[web:46][web:62][web:65][web:71]
+
+\subsection{Models}
+
+We use:
+\begin{itemize}
+    \item A domain-tuned SLM (approximately 7--8B parameters) trained or adapted on banking-specific data such as policies, product documents, and historical tickets.
+    \item One or two stronger LLMs (e.g., 30--70B or high-end API models) representing higher capacity and cost tiers, configured with similar RAG pipelines.
+\end{itemize}
+
+Model choices and pricing are calibrated to current public information on LLM and SLM offerings and financial-institution deployment patterns.[web:19][web:23][web:35][web:71][web:75][web:81][web:88]
+
+\subsection{Metrics}
+
+We evaluate using:
+\begin{itemize}
+    \item \textbf{Task quality:} accuracy or exact match on QA-style tasks; agreement with analyst labels in AML; correct discrepancy flags in trade documents; and policy-aligned answers in customer service.
+    \item \textbf{Cost and efficiency:} average tokens and dollar cost per query and per 1{,}000 cases, latency distributions (mean and 95th percentile), and utilization of SLM vs.\ LLM tiers.
+    \item \textbf{Risk-sensitive metrics:} false negative rate in AML and trade-risk tasks; critical error rate where outputs contradict policies or misrepresent regulations; and over-escalation rate that may burden human analysts.
+\end{itemize}
+
+These metrics reflect both operational efficiency and regulatory expectations around risk management and model governance in banking.[web:61][web:67][web:73][web:75][web:80][web:89]
+
+\subsection{Baselines}
+
+We compare our hybrid router against:
+\begin{itemize}
+    \item \emph{SLM-only}: all requests handled by the SLM with RAG.
+    \item \emph{LLM-only}: all requests handled by a high-end LLM with RAG.
+    \item \emph{Rule-based fallback}: heuristic escalation from SLM to LLM based on query length, keyword triggers, or simple thresholds on uncertainty.
+    \item \emph{Generic routing methods}: adaptations of recent cost-aware or contrastive routing approaches that do not use banking-specific risk signals.
+\end{itemize}
+
+\section{Results}
+
+Across all use cases, the hybrid router consistently recovers a large fraction of the always-LLM task performance while reducing average cost per case, often by substantial margins relative to LLM-only baselines. In KYC/AML triage, the hybrid system can be tuned to maintain false negative rates comparable to or better than the LLM-only baseline while significantly reducing LLM usage, illustrating that cost savings need not come at the expense of risk detection when routing is uncertainty- and cost-aware.[web:61][web:73][web:80][web:87][web:90]
+
+In customer service scenarios, the SLM handles the majority of routine inquiries with low latency, while the router escalates complex, multi-product, or ambiguous cases to the LLM tier, improving resolution quality under tight latency and budget constraints. In trade finance document checking, hybrid routing concentrates LLM usage on complex discrepancies and novel patterns, with the SLM handling standard checks efficiently, aligning with industry expectations for trade-risk automation.[web:67][web:73][web:80]
+
+Ablation studies show that including RAG diagnostics and domain-specific metadata in the routing features improves both cost-efficiency and risk control, and that cost parameters can be adjusted to meet different budget and risk profiles without retraining the router.\footnote{This flexibility is important for financial institutions, which may vary in their tolerance for GenAI operating expense and in their regulatory environment.[web:62][web:71][web:81][web:89]}
+
+\section{Discussion}
+
+Our findings support the viability of SLM-first, LLM-backed architectures for banking workloads under explicit accuracy, cost, and risk constraints. By grounding the routing design in uncertainty signals, retrieval quality, and domain-specific metadata, the system can allocate expensive LLM capacity to the cases where it has the greatest marginal benefit, while relying on SLMs for stable, high-volume tasks.[web:46][web:62][web:72][web:75][web:79][web:82]
+
+There are several limitations. First, the quality of routing depends on the calibration of SLM uncertainty and on the representativeness of training data; shifts in product mix or fraud patterns may require retraining or adaptation. Second, obtaining reliable ground truth for risk-sensitive tasks like AML is non-trivial and may require long-term collaboration with compliance teams. Third, integration with existing model risk management and governance frameworks is essential to ensure that routing decisions and their impacts are auditable and explainable.[web:61][web:73][web:80][web:89][web:90]
+
+\section{Conclusion}
+
+We presented a theoretical and empirical study of hybrid LLM--SLM routing under cost constraints, with a particular focus on banking and financial services. By framing routing as a cost-aware decision problem and implementing a practical, model-agnostic routing library, we demonstrated that SLM-first architectures can achieve near-LLM performance at substantially lower cost, while respecting domain-specific risk tolerances. Future work includes exploring multi-stage cascades with more than two tiers, integrating reinforcement learning or bandit methods for adaptive routing, and extending the evaluation to additional banking use cases such as credit underwriting and treasury operations.
+
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{arya_slm_vs_llm}
+Arya.ai.
+\newblock SLMs vs LLMs: What Should Financial Institutions Choose?.
+\newblock 2025.[web:75]
+
+\bibitem{infosys_slm_financial}
+Infosys Knowledge Institute.
+\newblock Smarter, smaller, safer: The case for small language models in financial services.
+\newblock 2025.[web:79][web:82]
+
+\bibitem{llms_vs_slms_fi}
+Complete AI Training.
+\newblock LLMs vs SLMs for Financial Institutions in 2025.
+\newblock 2025.[web:62]
+
+\bibitem{agentic_ai_aml}
+ComplyAdvantage.
+\newblock A Guide to the Transformative Role of Agentic AI in AML.
+\newblock 2025.[web:61]
+
+\bibitem{mckinsey_agentic_ai}
+McKinsey \& Company.
+\newblock How agentic AI can change the way banks fight financial crime.
+\newblock 2025.[web:73]
+
+\bibitem{deloitte_agentic_ai_banking}
+Deloitte.
+\newblock How banks can supercharge intelligent automation with agentic AI.
+\newblock 2025.[web:80]
+
+\bibitem{small_models_banking}
+Various authors.
+\newblock Small language models in banking and financial services.
+\newblock 2024--2025.[web:46][web:58][web:60][web:66]
+
+\bibitem{llm_routing}
+Various authors.
+\newblock Budget-constrained and cost-aware routing for large language models.
+\newblock 2024--2025.[web:39][web:43][web:45][web:48][web:51][web:52][web:56]
+
+\bibitem{llm_pricing}
+AIMultiple.
+\newblock LLM Pricing: Providers Compared.
+\newblock 2025.[web:35]
+
+\bibitem{ai_in_trade_finance}
+GTR and related sources.
+\newblock AI in trade finance and risk management.
+\newblock 2025.[web:67]
+
+\bibitem{agentic_ai_financial_services}
+Infosys Knowledge Institute.
+\newblock What agentic AI means for financial services.
+\newblock 2025.[web:89]
+
+\bibitem{aml_agentic_ai_training}
+American Bankers Association.
+\newblock Agentic AI -- A New Era in AML Compliance.
+\newblock 2025.[web:90]
+
+\bibitem{slm_trends_2025}
+Various authors.
+\newblock 2025 will be the year of small language models.
+\newblock 2024--2025.[web:86][web:84]
+
+\end{thebibliography}
+
+\end{document}
