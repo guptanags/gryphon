@@ -367,6 +367,16 @@ def get_graph_mermaid():
 
     try:
         graph = construct_graph(DummyTeam())
-        return graph.get_graph().draw_mermaid()
+        mermaid_graph = graph.get_graph().draw_mermaid()
+        
+        # Add Custom Styling
+        # Dark Blue for agents, Light Blue for End
+        custom_styles = """
+        classDef darkBlue fill:#2D3748,stroke:#1a202c,stroke-width:2px,color:#ffffff;
+        classDef lightBlue fill:#BEE3F8,stroke:#3182CE,stroke-width:2px,color:#000000;
+        class planner,researcher,verifier,coder,syntax,tester,git darkBlue;
+        class __end__ lightBlue;
+        """
+        return mermaid_graph + custom_styles
     except Exception as e:
         return f"Error generating mermaid graph: {str(e)}"
