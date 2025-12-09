@@ -12,6 +12,9 @@ from agent_tools import AgentTools
 from pipeline import setup_qdrant, CODE_COLLECTION_NAME
 from qdrant_client import models
 from prompt_manager import prompt_manager # <--- NEW IMPORT
+from flashrank import Ranker, RerankRequest
+
+ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp/flashrank")
 
 # --- Configuration ---
 VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID")
@@ -179,11 +182,23 @@ class AutonomousDevTeam:
                 with_payload=True
             )
             
-            top_file_paths = [res.payload['file_path'] for res in file_results]
-            print(f"   [Researcher] Top Candidate Files: {top_file_paths}")
+            # 2. Format for Reranker
+            passages = [
+                {"id": str(i), "text": res.payload['content'], "meta": res.payload} 
+                for i, res in enumerate(file_results)
+            ]
+    
+    # 3. Rerank! (The Magic Step)
+            rerank_request = RerankRequest(query=state['requirement'], passages=passages)
+            reranked_results = ranker.rerank(rerank_request)
+            top_files = []
+            for r in reranked_results[:5]:
+                print(f"   [Reranker] Score {r['score']}: {r['meta']['file_path']}")
+                top_files.append(r['meta']['file_path'])
+            print(f"   [Researcher] Top Candidate Files: {top_files}")
             
             # Add them to our "Found" list so Coder gets the whole file if needed
-            found_files.extend(top_file_paths)
+            found_files.extend(top_files)
             
             # STEP B: Chunk Level Scoped Search (Optional optimization)
             # If you want to find specific *lines* inside those files to save context window:
@@ -194,8 +209,8 @@ class AutonomousDevTeam:
                 query_filter=models.Filter(
                     must=[
                         models.FieldCondition(
-                            key="metadata.file_path", 
-                            match=models.MatchAny(any=top_file_paths) # <--- SCOPED FILTER
+                            key="file_path", 
+                            match=models.MatchAny(any=top_files) # <--- SCOPED FILTER
                         )
                     ]
                 )
