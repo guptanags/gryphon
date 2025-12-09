@@ -7,7 +7,8 @@ import subprocess
 import logging
 from typing import List, Tuple, Optional
 from git import Repo
-
+import xml.etree.ElementTree as ET
+import re
 # Third-party libraries
 from qdrant_client import QdrantClient, models
 from tree_sitter import Language, Parser, Query, QueryCursor
@@ -284,11 +285,67 @@ def _calculate_complexity(content: str) -> int:
     except Exception:
         return 1
 
+def parse_manifest_dependencies(file_path: str, content: str) -> list:
+    """
+    Parses build files to extract declared dependencies.
+    Returns a list of strings: ["group:artifact:version", "npm-package:version"]
+    """
+    dependencies = []
+    filename = os.path.basename(file_path)
+
+    try:
+        # 1. Maven (pom.xml)
+        if filename == "pom.xml":
+            root = ET.fromstring(content)
+            # Handle XML namespaces if present (simplified here)
+            ns = {'mvn': 'http://maven.apache.org/POM/4.0.0'}
+            # Try with and without namespace
+            deps = root.findall(".//dependency") or root.findall(".//mvn:dependency", ns)
+            
+            for dep in deps:
+                g = dep.find("groupId") or dep.find("mvn:groupId", ns)
+                a = dep.find("artifactId") or dep.find("mvn:artifactId", ns)
+                v = dep.find("version") or dep.find("mvn:version", ns)
+                
+                if g is not None and a is not None:
+                    dep_str = f"maven://{g.text}:{a.text}"
+                    if v is not None: dep_str += f":{v.text}"
+                    dependencies.append(dep_str)
+
+        # 2. Node.js (package.json)
+        elif filename == "package.json":
+            data = json.loads(content)
+            for section in ["dependencies", "devDependencies"]:
+                if section in data:
+                    for pkg, ver in data[section].items():
+                        dependencies.append(f"npm://{pkg}:{ver}")
+
+        # 3. Python (requirements.txt)
+        elif filename == "requirements.txt":
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    dependencies.append(f"pypi://{line}")
+        
+        # 4. Gradle (build.gradle)
+        elif filename.endswith(".gradle"):
+            # Simple Regex for implementation 'group:name:version'
+            # Matches: implementation 'com.google.guava:guava:30.1'
+            pattern = r"implementation\s+['\"]([^'\"]+)['\"]"
+            matches = re.findall(pattern, content)
+            for m in matches:
+                dependencies.append(f"gradle://{m}")
+
+    except Exception as e:
+        log.warning(f"Failed to parse dependencies in {file_path}: {e}")
+
+    return dependencies
+
 def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple[List, List]:
     code_chunks = []
     doc_chunks = []
     file_summaries = []
-
+    manifest_files = {"pom.xml", "package.json", "requirements.txt", "build.gradle"}
     for root, dirs, files in os.walk(repo_path):
         if ".git" in root: continue # Skip .git directory
         
@@ -343,6 +400,7 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                                 "complexity": _calculate_complexity(content_str)
                             }
                         })
+                    
                 except Exception as e:
                     log.warning(f"Error parsing code {file_path}: {e}")
 
@@ -357,6 +415,36 @@ def parse_codebase(repo_path: str, repo_url: str, branch: str = "main") -> Tuple
                 except Exception as e:
                     log.warning(f"Error parsing text {file_path}: {e}")
 
+            # C. MANIFEST FILES
+            if file in manifest_files or file.endswith(".gradle"):
+                file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(file_path, repo_path)
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    deps = parse_manifest_dependencies(relative_path, content)
+                    
+                    if deps:
+                        # Create a "Dependency Graph" document
+                        # This allows the AI to find "Which repo uses Log4j?"
+                        summary_text = f"Dependency Manifest for {relative_path}:\n" + "\n".join(deps)
+                        
+                        doc_chunks.append({
+                            "content": summary_text,
+                            "content_hash": compute_hash(summary_text),
+                            "metadata": {
+                                "doc_type": "dependency_graph",
+                                "repo_url": repo_url,
+                                "file_path": relative_path,
+                                "dependency_count": len(deps),
+                                "dependencies": deps # Store raw list for metadata filtering
+                            }
+                        })
+                except Exception as e:
+                    log.warning(f"Error processing manifest {file}: {e}")
+
     log.info(f"Parsed {len(code_chunks)} code chunks and {len(doc_chunks)} text/markup chunks.")
     return code_chunks, doc_chunks, file_summaries
 
@@ -369,6 +457,14 @@ def parse_pdf(pdf_path: str) -> list:
     except Exception as e:
         log.error(f"Error parsing PDF: {e}")
         return []
+
+def generate_deterministic_id(repo_url: str, file_path: str, chunk_index: int = 0) -> str:
+    """
+    Generates a consistent UUID based on the file location.
+    Ensures that re-ingesting 'pom.xml' overwrites the old record instead of duplicating it.
+    """
+    unique_string = f"{repo_url}::{file_path}::{chunk_index}"
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_string))
 
 def parse_confluence(page_url: str, token: str = None) -> list:
     log.info(f"Parsing Confluence: {page_url}")
@@ -452,34 +548,82 @@ def _estimate_code_coverage(model: GenerativeModel, all_code: list, all_tests: l
 
 # --- 8. AI Generators (Docs, Embeddings, Tests) ---
 
+# --- pipeline.py ---
+
 def generate_documentation(model: GenerativeModel, code_chunks: list) -> list:
+    """
+    Generates detailed Functional, Technical, and Architectural documentation 
+    for code chunks using GenAI.
+    """
     doc_chunks = []
-    gen_config = GenerationConfig(temperature=0.1, max_output_tokens=1024)
+    # Increase output tokens to allow for comprehensive documentation
+    gen_config = GenerationConfig(temperature=0.2, max_output_tokens=2048)
     
-    for chunk in tqdm(code_chunks, desc="Generating Docs"):
-        # Incremental Check could go here, but usually done at embedding stage
+    log.info(f"Generating detailed documentation for {len(code_chunks)} chunks...")
+
+    for chunk in tqdm(code_chunks, desc="AI Documentation"):
+        # Skip trivial chunks (e.g., empty constructors or tiny helpers) to save cost
+        if len(chunk['content']) < 100:
+            continue
+
+        file_path = chunk['metadata'].get('file_path', 'unknown')
+        chunk_name = chunk['metadata'].get('chunk_name', 'unknown')
+        chunk_type = chunk['metadata'].get('chunk_type', 'component')
+        
         prompt = f"""
-        Write a technical and functional summary for this code:
+        Act as a Senior Software Architect and Technical Writer.
+        Analyze the provided code component and generate comprehensive documentation.
+        
+        **Component Context:**
+        - File: {file_path}
+        - Name: {chunk_name}
+        - Type: {chunk_type}
+        
+        **Code:**
         ```
-        {chunk['content'][:4000]}
+        {chunk['content'][:8000]} 
         ```
-        Format:
-        **Technical:** ...
-        **Functional:** ...
+        
+        **Documentation Requirements:**
+        1. **Functional Specification:** Describe WHAT this component does from a business/domain perspective. Who uses it and why?
+        2. **Technical Details:** Describe HOW it works. List key parameters, return values, side effects, and complex algorithms.
+        3. **Architecture & Patterns:** Identify design patterns used (e.g., Singleton, Builder, MVC Controller). List critical dependencies.
+        
+        **Output Format (Markdown):**
+        # Documentation: {chunk_name}
+        
+        ## 📘 Functional Overview
+        (Text here...)
+        
+        ## ⚙️ Technical Specification
+        - **Inputs:** ...
+        - **Outputs:** ...
+        - **Logic:** ...
+        
+        ## 🏗️ Architecture & Design
+        - **Patterns:** ...
+        - **Dependencies:** ...
         """
+        
         try:
             res = model.generate_content([Part.from_text(prompt)], generation_config=gen_config)
+            
             doc_chunks.append({
                 "content": res.text,
                 "content_hash": compute_hash(res.text),
                 "metadata": {
-                    "doc_type": "ai_generated_tech_summary",
-                    "source_chunk_name": chunk['metadata']['chunk_name'],
-                    "repo_url": chunk['metadata']['repo_url']
+                    "doc_type": "ai_generated_documentation",
+                    "repo_url": chunk['metadata']['repo_url'],
+                    "file_path": file_path,
+                    "source_chunk_name": chunk_name,
+                    # Link back to the exact code hash this doc was generated for
+                    "related_code_hash": chunk['content_hash'] 
                 }
             })
-        except Exception:
+        except Exception as e:
+            log.warning(f"Doc generation failed for {chunk_name}: {e}")
             continue
+            
     return doc_chunks
 
 # 3. New Helper: Generate File Summary
@@ -610,8 +754,14 @@ def store_in_qdrant(client: QdrantClient, collection_name: str, chunks: list, em
         payload = chunk['metadata']
         payload['content'] = chunk['content']
         payload['content_hash'] = chunk.get('content_hash', '')
+
+        point_id = generate_deterministic_id(
+            chunk['metadata']['repo_url'],
+            chunk['metadata']['file_path'],
+            chunk['metadata'].get('chunk_index', 0)
+        )
         
-        points.append(models.PointStruct(id=str(uuid.uuid4()), vector=embeddings[i], payload=payload))
+        points.append(models.PointStruct(id=point_id, vector=embeddings[i], payload=payload))
         
     for i in tqdm(range(0, len(points), BATCH_SIZE), desc=f"Uploading to {collection_name}"):
         try:

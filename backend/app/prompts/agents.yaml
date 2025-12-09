@@ -1,4 +1,29 @@
 # prompts/agents.yaml
+# prompts/agents.yaml
+
+analyst:
+  system: "You are an Expert Technical Business Analyst."
+  user: |
+    Refine this vague requirement into a detailed technical specification.
+    
+    User Input: "{{ requirement }}"
+    
+    Current Stack: {{ language }} / {{ project_type }}
+    
+    **Instructions:**
+    1. Expand the requirement into clear functional steps.
+    2. Add necessary technical details (e.g., if 'login', specify 'BCrypt password hashing' and 'JWT').
+    3. List implied tasks (e.g., "Update requirements.txt", "Add migration script").
+    4. Keep it concise but complete.
+    
+    Output Format:
+    **Goal:** [One sentence summary]
+    **Technical Specs:**
+    - [Detail 1]
+    - [Detail 2]
+    **Implied Tasks:**
+    - [Task 1]
+    - [Task 2]
 
 planner:
   system: "You are a Technical Architect."
@@ -24,24 +49,26 @@ researcher:
     Plan: "{{ plan }}"
     Return JSON: { "files": ["path/to/file1"], "symbols": ["ClassName"] }
 
+# prompts/agents.yaml
+
 coder:
-  system: "You are a Senior Developer."
   user: |
     Implement this requirement: "{{ requirement }}"
     Language: {{ language }}
-    Framework: {{ project_type }}
     
     Plan: {{ plan }}
     
-    Previous Errors (if any): {{ previous_errors }}
+    **AVAILABLE LIBRARIES / DEPENDENCIES:**
+    {{ dependency_context }}
     
     Context Code:
     {{ context_code }}
     
     **CRITICAL INSTRUCTIONS:**
-    1. Return the COMPLETE source code for any modified file. **NO PLACEHOLDERS**.
-    2. If Java: Ensure correct package declarations and imports.
-    3. Output must match the JSON Schema provided.
+    1. Only import libraries listed in the **AVAILABLE LIBRARIES** section above.
+    2. If you need a library not listed there, you must explicitly mention adding it to `pom.xml` or `requirements.txt` in your output.
+    3. Return the COMPLETE source code.
+    
 
 verifier:
   user: |

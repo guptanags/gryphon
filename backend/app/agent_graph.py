@@ -94,7 +94,10 @@ class AgentState(TypedDict):
     relevant_files: List[str]
     code_changes: Dict[str, str]
     test_code: Dict[str, str]
-    
+    raw_requirement: str      # The user's original input
+    requirement: str          # The REFINED requirement (used by Planner/Coder)
+    dependency_context: str
+
     # Robustness Flags
     syntax_status: str
     review_status: str
@@ -112,6 +115,43 @@ class AutonomousDevTeam:
         self.repo_path = repo_path
         self.tools = AgentTools(repo_path)
         self.qdrant = setup_qdrant()
+
+    # --- REQUIREMENT ANALYST ---
+    def analyst_agent(self, state: AgentState):
+        print("--- ANALYST AGENT ---")
+        
+        # Detect Stack (Duplicate logic from Planner, or move to a shared setup node)
+        files_list = self.tools.list_files()
+        language = "python"
+        project_type = "generic"
+        if any(f.endswith("pom.xml") for f in files_list):
+            language = "java"; project_type = "spring-boot"
+        elif any(f.endswith("package.json") for f in files_list):
+            language = "typescript"; project_type = "node"
+
+        # USE PROMPT MANAGER
+        prompt = prompt_manager.render(
+            'analyst', 'user',
+            requirement=state['raw_requirement'], # Use raw input
+            language=language,
+            project_type=project_type
+        )
+        
+        try:
+            # We treat this as a refined string, not JSON, to allow flexible formatting
+            refined_text = generate_content_rest(prompt)
+            print(f"   [Analyst] Refined Requirement:\n{refined_text[:100]}...")
+            
+            return {
+                "requirement": refined_text, # Overwrite the 'requirement' field for downstream agents
+                "language": language,        # Pass these along so Planner doesn't need to re-detect
+                "project_type": project_type,
+                "history": ["Requirement refined by Analyst."]
+            }
+        except Exception as e:
+            print(f"Analyst failed: {e}")
+            # Fallback: Just use the raw input if Analyst crashes
+            return {"requirement": state['raw_requirement'], "history": ["Analyst failed, using raw input."]}
 
     # --- PLANNER ---
     def planner_agent(self, state: AgentState):
@@ -153,7 +193,8 @@ class AutonomousDevTeam:
     def researcher_agent(self, state: AgentState):
         print("--- RESEARCHER AGENT ---")
         found_files = []
-        
+        dep_context = "No dependency information found."
+
         # Handle "Missing Symbols" loop from Verifier
         if state.get("missing_symbols"):
             print(f"   [Researcher] Hunting missing symbols: {state['missing_symbols']}")
@@ -215,9 +256,42 @@ class AutonomousDevTeam:
                     ]
                 )
             )
-        
-        return {"relevant_files": list(set(found_files)), "history": [f"Researched: {found_files}"]}
 
+        try:
+            # Search for the special doc_type we created in pipeline.py
+            dep_results = self.qdrant.scroll(
+                collection_name="docs", # Or wherever you stored doc_chunks
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.doc_type", 
+                            match=models.MatchValue(value="dependency_graph")
+                        ),
+                        models.FieldCondition(
+                            key="metadata.repo_url", 
+                            # We assume we are working on the repo defined in the state
+                            # You might need to fetch this from the first found file's metadata if multi-repo
+                            match=models.MatchValue(value=state.get('repo_url', '')) 
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=True
+            )
+            
+            if dep_results[0]:
+                # This contains the "Maven://..." or "npm://..." list we generated
+                dep_context = dep_results[0][0].payload['content']
+                print(f"   [Researcher] Loaded Dependency Context ({len(dep_context)} chars).")
+                
+        except Exception as e:
+            print(f"   [Researcher] Warning: Could not load dependencies: {e}")
+
+        return {
+            "relevant_files": list(set(found_files)), 
+            "dependency_context": dep_context, # <--- Pass to State
+            "history": [f"Researched files and dependencies."]
+        }
     # --- CONTEXT VERIFIER ---
     def context_verifier_agent(self, state: AgentState):
         print("--- CONTEXT VERIFIER ---")
@@ -263,6 +337,7 @@ class AutonomousDevTeam:
             language=state['language'],
             project_type=state['project_type'],
             plan=state['plan'],
+            dependency_context=state.get('dependency_context', 'Unknown'), # <--- Pass it here
             previous_errors=previous_err,
             context_code=context_str
         )
@@ -331,6 +406,7 @@ class AutonomousDevTeam:
 def construct_graph(team):
     wf = StateGraph(AgentState)
     
+    wf.add_node("analyst", team.analyst_agent)
     wf.add_node("planner", team.planner_agent)
     wf.add_node("researcher", team.researcher_agent)
     wf.add_node("verifier", team.context_verifier_agent) # Added Verifier
@@ -340,7 +416,8 @@ def construct_graph(team):
     wf.add_node("git", team.git_manager_agent)
     
     # Edges
-    wf.set_entry_point("planner")
+    wf.set_entry_point("analyst")
+    wf.add_edge("analyst", "planner")
     wf.add_edge("planner", "researcher")
     wf.add_edge("researcher", "verifier")
     

@@ -499,7 +499,8 @@ def implement_feature(req: AutonomousTaskRequest, background_tasks: BackgroundTa
             initial_state = {
                 "logical_name": req.logical_name,
                 "repo_path": repo_path,
-                "requirement": req.requirement,
+                "raw_requirement": req.requirement,
+                "requirement": "",
                 "history": []
             }
             
