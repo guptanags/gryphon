@@ -112,3 +112,73 @@ class AgentTools:
                     skeleton.append(f"{subindent}{f}")
                     
         return "\n".join(skeleton)
+
+    def read_file_with_lines(self, relative_path: str) -> str:
+        """Reads a file and adds line numbers for the LLM's context."""
+        content = self.read_file(relative_path)
+        if not content or "Error" in content: return content
+        
+        lines = content.split('\n')
+        numbered_lines = [f"{i+1:04d} | {line}" for i, line in enumerate(lines)]
+        return "\n".join(numbered_lines)
+
+    def apply_patch(self, relative_path: str, search_block: str, replace_block: str) -> str:
+        """
+        Locates the 'search_block' in the file and replaces it with 'replace_block'.
+        Uses fuzzy matching to handle minor whitespace differences.
+        """
+        full_path = os.path.join(self.repo_path, relative_path)
+        if not os.path.exists(full_path):
+            return f"Error: File {relative_path} not found."
+
+        with open(full_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 1. Exact Match Try
+        if search_block in content:
+            new_content = content.replace(search_block, replace_block, 1) # Replace only first occurrence
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            return "Patch applied successfully (Exact match)."
+
+        # 2. Relaxed Whitespace Match (Handling indentation differences)
+        # Normalize: strip leading/trailing whitespace from every line
+        search_lines = [l.strip() for l in search_block.split('\n') if l.strip()]
+        file_lines = content.split('\n')
+        
+        # Simple sliding window search
+        start_idx = -1
+        match_count = 0
+        
+        for i, line in enumerate(file_lines):
+            if match_count < len(search_lines):
+                if search_lines[match_count] in line: # Relaxed check
+                    if match_count == 0: start_idx = i
+                    match_count += 1
+                else:
+                    match_count = 0 # Reset if sequence breaks
+                    start_idx = -1
+            
+            if match_count == len(search_lines):
+                # Found the block! Replace lines from start_idx to i
+                # Note: This is a naive replacement, distinct from strict diffs, but works for LLMs
+                # A safer production way is to use 'ed' scripts or 'git apply', but this is python-native.
+                
+                # Construct new content
+                before = file_lines[:start_idx]
+                after = file_lines[i+1:]
+                
+                # Determine indentation of the start line to respect existing style
+                original_indent = file_lines[start_idx][:len(file_lines[start_idx]) - len(file_lines[start_idx].lstrip())]
+                
+                # Apply indentation to replacement block
+                replace_lines = replace_block.split('\n')
+                indented_replace = [original_indent + l for l in replace_lines]
+                
+                new_content_lines = before + indented_replace + after
+                
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(new_content_lines))
+                return "Patch applied successfully (Fuzzy match)."
+
+        return "Error: Could not locate the 'search_block' in the file. Patch failed."

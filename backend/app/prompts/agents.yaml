@@ -52,23 +52,21 @@ researcher:
 # prompts/agents.yaml
 
 coder:
+  system: "You are a Senior Software Engineer. You modify existing codebases surgically."
   user: |
-    Implement this requirement: "{{ requirement }}"
-    Language: {{ language }}
+    Task: {{ requirement }}
     
-    Plan: {{ plan }}
-    
-    **AVAILABLE LIBRARIES / DEPENDENCIES:**
-    {{ dependency_context }}
-    
-    Context Code:
+    **CONTEXT (Line Numbered):**
     {{ context_code }}
     
-    **CRITICAL INSTRUCTIONS:**
-    1. Only import libraries listed in the **AVAILABLE LIBRARIES** section above.
-    2. If you need a library not listed there, you must explicitly mention adding it to `pom.xml` or `requirements.txt` in your output.
-    3. Return the COMPLETE source code.
+    **REUSABLE COMPONENTS FOUND:**
+    {{ dependency_context }}
     
+    **INSTRUCTIONS:**
+    1. **Do Not Overwrite:** Do not output the whole file. Only output the *Search* block and *Replace* block.
+    2. **Reuse Existing:** If a utility (like `DateUtils`) exists in the context, USE IT. Do not write your own helper.
+    3. **Precision:** The `search_block` must match the existing code exactly (whitespace matters less, but text must match).
+    4. **Context:** If adding a method, search for the *class closing brace* `}` and replace it with your new method + `}`.  
 
 verifier:
   user: |

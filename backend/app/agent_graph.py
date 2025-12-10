@@ -26,20 +26,30 @@ CODER_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "thought_process": {"type": "string"},
-        "files": {
+        "edits": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "filepath": {"type": "string"},
-                    "content": {"type": "string"},
-                    "action": {"type": "string", "enum": ["create", "overwrite"]}
+                    "search_block": {
+                        "type": "string", 
+                        "description": "The EXACT existing code block to be replaced. Copy-paste relevant lines."
+                    },
+                    "replace_block": {
+                        "type": "string", 
+                        "description": "The new code to insert in place of the search_block."
+                    },
+                    "action": {
+                        "type": "string", 
+                        "enum": ["replace", "create_file"]
+                    }
                 },
-                "required": ["filepath", "content", "action"]
+                "required": ["filepath", "action"]
             }
         }
     },
-    "required": ["thought_process", "files"]
+    "required": ["thought_process", "edits"]
 }
 
 # --- 2. Helper Functions (REST & Auth) ---
@@ -286,10 +296,21 @@ class AutonomousDevTeam:
                 
         except Exception as e:
             print(f"   [Researcher] Warning: Could not load dependencies: {e}")
+        reuse_keywords = ["Util", "Helper", "Mapper", "Config", "Common"]
+        reuse_context = []
+        
+        # NEW: Explicit "Reuse Hunt"
+        # If the plan mentions "formatting dates" or "user validation", 
+        # we specifically look for existing Utils/Helpers.
+        for keyword in reuse_keywords:
+            # Quick filename search (much faster than vector search)
+            # You can add this method to agent_tools or use simple glob matching
+            matches = [f for f in self.tools.list_files() if keyword in f]
+            reuse_context.extend(matches)
 
         return {
             "relevant_files": list(set(found_files)), 
-            "dependency_context": dep_context, # <--- Pass to State
+            "dependency_context": f"Existing Utilities you might use: {reuse_context}",
             "history": [f"Researched files and dependencies."]
         }
     # --- CONTEXT VERIFIER ---
@@ -326,9 +347,12 @@ class AutonomousDevTeam:
         
         context_str = ""
         for path in state['relevant_files']:
-            context_str += f"\nFile: {path}\n```\n{self.tools.read_file(path)}\n```\n"
-            
+            # Use the new tool that adds line numbers
+            numbered = self.tools.read_file_with_lines(path)
+            context_str += f"\nFile: {path}\n```\n{numbered}\n```\n"
+        
         previous_err = state.get('history', [])[-1] if 'failed' in str(state.get('history', [])) else 'None'
+        
         
         # USE PROMPT MANAGER
         prompt = prompt_manager.render(
@@ -344,9 +368,26 @@ class AutonomousDevTeam:
         
         try:
             data = generate_content_rest(prompt, schema=CODER_RESPONSE_SCHEMA)
-            changes = {f['filepath']: f['content'] for f in data.get("files", [])}
+            for edit in data.get("edits", []):
+                fpath = edit['filepath']
+                action = edit['action']
+                
+                if action == "create_file":
+                    # For new files, replace_block is the whole content
+                    self.tools.write_file(fpath, edit['replace_block'])
+                    
+                elif action == "replace":
+                    # For modifications, use the patcher
+                    result = self.tools.apply_patch(
+                        fpath, 
+                        edit.get('search_block', ''), 
+                        edit.get('replace_block', '')
+                    )
+                    if "Error" in result:
+                        # If fuzzy patch failed, log it for the "Reflexion" loop
+                        return {"history": [f"Patch failed for {fpath}: {result} - Try matching the existing code more precisely."]}
             return {
-                "code_changes": changes, 
+                "code_changes": result, 
                 "history": [f"Code generated (Iter {current_iter})."],
                 "syntax_status": "pending", 
                 "iterations": current_iter + 1
