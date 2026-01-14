@@ -3,6 +3,7 @@ import os
 import shutil
 from git import Repo
 import logging
+import subprocess
 
 log = logging.getLogger(__name__)
 
@@ -182,3 +183,56 @@ class AgentTools:
                 return "Patch applied successfully (Fuzzy match)."
 
         return "Error: Could not locate the 'search_block' in the file. Patch failed."
+
+    def run_unit_tests(self, language: str) -> dict:
+        """
+        Executes the unit tests for the specific language and returns the results.
+        """
+        try:
+            if language == "python":
+                # Run pytest on the repo
+                result = subprocess.run(
+                    ["pytest", "--json-report", "--json-report-file=report.json", self.repo_path],
+                    capture_output=True, text=True, timeout=30
+                )
+                return {
+                    "success": result.returncode == 0,
+                    "output": result.stdout if result.returncode == 0 else result.stderr
+                }
+            
+            elif language == "java":
+                # Run Maven Test
+                result = subprocess.run(
+                    ["mvn", "test", "-DfailIfNoTests=false"],
+                    cwd=self.repo_path, capture_output=True, text=True, timeout=60
+                )
+                return {
+                    "success": result.returncode == 0,
+                    "output": result.stdout if result.returncode == 0 else result.stderr
+                }
+            
+            return {"success": False, "output": "Unsupported language for execution."}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "output": "Tests timed out (Possible infinite loop)."}
+        except Exception as e:
+            return {"success": False, "output": str(e)}
+
+    def find_style_example(self, target_file: str) -> str:
+        """
+        Finds a 'peer' file to act as a coding style guide.
+        Priority: 1. Same directory, 2. Same suffix (e.g., Service.java)
+        """
+        directory = os.path.dirname(target_file)
+        target_name = os.path.basename(target_file)
+        suffix = target_name.split('.')[-1]
+        
+        # 1. Try to find another file in the same directory
+        peers = [f for f in os.listdir(os.path.join(self.repo_path, directory)) 
+                 if f.endswith(suffix) and f != target_name]
+        
+        if peers:
+            return os.path.join(directory, peers[0])
+            
+        # 2. Fallback: Search the whole repo for a file with the same suffix
+        # (This would be better served by a Qdrant search in production)
+        return None

@@ -26,21 +26,41 @@ analyst:
     - [Task 2]
 
 planner:
-  system: "You are a Technical Architect."
+  system: "You are a Senior Software Architect."
   user: |
     Requirement: "{{ requirement }}"
+    Stack: {{ language }} / {{ project_type }}
     
-    Context:
-    - Language: {{ language }}
-    - Framework: {{ project_type }}
+    Task: Generate THREE distinct implementation plans (Options A, B, and C).
+    - Option A: The "Quick Fix" (Minimal changes).
+    - Option B: The "Architectural Best Practice" (Full SOLID compliance, decoupling).
+    - Option C: The "Future Proof" (High scalability, uses patterns like Strategy or Factory).
     
-    Repo Structure (Skeleton):
-    {{ skeleton }}
+    For each option, list:
+    1. Files to modify.
+    2. Logic overview.
+    3. Pros and Cons.
+
+critic:
+  system: "You are a Principal Software Engineer focused on SOLID principles and Clean Code."
+  user: |
+    Evaluate the following three implementation plans for the requirement: "{{ requirement }}"
     
-    Create a concise implementation plan.
-    1. Identify specific existing files to modify.
-    2. Identify new files needed (including tests).
-    3. Explain the logic briefly.
+    Plans:
+    {{ plans_text }}
+    
+    Evaluation Criteria:
+    - **Single Responsibility (SRP):** Does it bloat existing classes?
+    - **Open/Closed:** Does it allow for future extension?
+    - **Maintainability:** Is it "Banking Grade" code?
+    
+    Output Format (JSON):
+    {
+      "scores": { "OptionA": 7, "OptionB": 9, "OptionC": 6 },
+      "selection": "OptionB",
+      "reasoning": "Option B follows the Open/Closed principle by introducing an Interface rather than modifying the core Controller logic.",
+      "critical_flaws": "Option A introduces technical debt; Option C is over-engineered for this scope."
+    }
 
 researcher:
   extract_files: |
@@ -59,9 +79,32 @@ coder:
     **CONTEXT (Line Numbered):**
     {{ context_code }}
     
+    **STYLE GUIDE (Reference File):**
+    Use the following file as your 'Gold Standard' for:
+    - Logging formats and libraries.
+    - Exception handling patterns.
+    - Variable naming conventions and indentation.
+    - Documentation (Javadoc/Docstring) style.
+    
+    ```
+    {{ style_example_code }}
+    ```
+
+    **CRITICAL INSTRUCTION:** Your generated code must strictly follow the patterns seen in the STYLE GUIDE above. 
+    If the guide uses 'final' keywords or specific annotations, you must do the same.
+    
     **REUSABLE COMPONENTS FOUND:**
     {{ dependency_context }}
+
+    **RUNTIME FEEDBACK:**
+    The last implementation failed with the following error:
+    {{ previous_errors }}
     
+    **TASK:**
+    Analyze the stack trace/error above and provide a fix. 
+    Ensure the search_block matches the current (possibly broken) state of the file.
+    
+
     **INSTRUCTIONS:**
     1. **Do Not Overwrite:** Do not output the whole file. Only output the *Search* block and *Replace* block.
     2. **Reuse Existing:** If a utility (like `DateUtils`) exists in the context, USE IT. Do not write your own helper.

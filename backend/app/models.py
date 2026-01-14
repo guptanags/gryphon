@@ -33,3 +33,17 @@ class RepositoryBranch(Base):
 
     def __repr__(self):
         return f"<RepositoryBranch(logical_name='{self.logical_name}', branch='{self.branch_name}')>"
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(String, index=True)         # Unique ID for this workflow execution
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    
+    component = Column(String) # e.g., "Planner", "Coder", "VertexAPI"
+    event_type = Column(String) # e.g., "Thought", "Tool Use", "Error", "Decision"
+    
+    summary = Column(String)   # Short readable summary
+    details = Column(JSON)     # Full data (Prompt text, JSON response, etc.)
