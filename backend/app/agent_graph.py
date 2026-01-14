@@ -18,7 +18,8 @@ except ImportError:
 
 # --- Internal Modules ---
 from agent_tools import AgentTools
-from pipeline import setup_qdrant, CODE_COLLECTION_NAME, FILE_SUMMARY_COLLECTION_NAME, DOCS_COLLECTION_NAME
+from pipeline_utils import setup_qdrant
+from pipeline_config import CODE_COLLECTION_NAME, FILE_SUMMARY_COLLECTION_NAME, DOCS_COLLECTION_NAME
 from prompt_manager import prompt_manager
 from audit_manager import get_logger
 
